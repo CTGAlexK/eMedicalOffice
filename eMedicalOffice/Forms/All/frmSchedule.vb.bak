@@ -1,0 +1,2430 @@
+﻿Imports System.Reflection
+Imports CrystalDecisions.CrystalReports.Engine
+Imports CrystalDecisions.Shared
+Imports log4net
+
+Public Class frmSchedule
+    Private ReadOnly log As ILog = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType)
+    Private PressedKey As String = ""
+    Public ReturnSchPickupTransportation As Integer
+    Public ReturnSchDestinationTransportation As Integer
+    Public ReturnSchPickupTransportationOther As String
+    Public ReturnSchDestinationTransportationOther As String
+    Public ReturnSchName As String
+    Public ReturnScheduleID As Long
+    Public ReturnUserID As Long
+    Private LoadingInd As Boolean
+    Public ActiveSheet As FarPoint.Win.Spread.SheetView
+    Public SchedulkeBlockID As Long
+    Public SchedulkeBlockComment As String
+    Public AdminLoggedIn As Boolean
+
+    Public Sub New()
+        InitializeComponent()
+        SetStyle(ControlStyles.OptimizedDoubleBuffer, True)
+        SetStyle(ControlStyles.ResizeRedraw, True)
+        SetStyle(ControlStyles.AllPaintingInWmPaint, True)
+    End Sub
+
+    Private Sub Calculate_Totals()
+        Dim TL As Integer = 0
+        Dim CT As Integer = 0
+        Dim CD As Integer = 0
+        Dim WG As Integer = 0
+        Dim NS As Integer = 0
+        Dim R As Integer = 0
+        Dim C As Integer = 0
+        Dim ProcsName() As String
+        Dim ProcsCountTotal() As Integer
+        Dim ProcsCountComplete() As Integer
+
+        For C = 2 To ActiveSheet.ColumnCount - 1
+            If ActiveSheet.ColumnHeader.Columns(C).Locked = False Then
+                ReDim Preserve ProcsName(C - 2)
+                ProcsName(C - 2) = ActiveSheet.ColumnHeader.Columns(C).Label
+                ReDim ProcsCountTotal(C - 2)
+                ReDim ProcsCountComplete(C - 2)
+            End If
+        Next
+
+        For R = 0 To ActiveSheet.RowCount - 1
+            For C = 2 To ActiveSheet.ColumnCount - 1
+                If ActiveSheet.ColumnHeader.Columns(C).Locked = False Then
+                    If ActiveSheet.Cells(R, C).Text <> "" Then
+                        ProcsCountTotal(C - 2) += 1
+                    End If
+                    Select Case ActiveSheet.Cells(R, C).BackColor
+                        Case Color.Violet ' Waiting
+                            WG += 1
+                        Case Color.BurlyWood ' Confirmed
+                            If CDate(FormatDateTime(DateTimePicker1.Value.Date, 2)) < CDate(FormatDateTime(Now, 2)) Then
+                                NS += 1
+                            Else
+                                CD += 1
+                            End If
+                        Case Color.MediumAquamarine ' Complete
+                            ProcsCountComplete(C - 2) += 1
+                        Case Color.Khaki
+                            If CDate(FormatDateTime(DateTimePicker1.Value.Date, 2)) < CDate(FormatDateTime(Now, 2)) Then
+                                NS += 1
+                            End If
+                    End Select
+                End If
+            Next
+        Next
+        StatusStrip2.SuspendLayout()
+        StatusStrip2.Items.Clear()
+        If Not ProcsName Is Nothing Then
+            For C = 0 To ProcsName.Length - 1
+                If Not ProcsName(C) Is Nothing Then
+                    StatusStrip2.Items.Add(ProcsName(C).ToString & " Scheduled: " & ProcsCountTotal(C).ToString & "   ")
+                    StatusStrip2.Items.Add(ProcsName(C).ToString & " Completed: " & ProcsCountComplete(C).ToString & "   ")
+                    StatusStrip2.Items.Add("  |  ")
+                End If
+            Next
+        End If
+        StatusStrip2.ResumeLayout()
+
+    End Sub
+
+    Private Sub Schedule_FormClosing(ByVal sender As Object, ByVal e As Windows.Forms.FormClosingEventArgs) Handles Me.FormClosing
+        gSpread_Settings(Me, FpSpreadSchedule, ReadWrite.sWrite)
+        gWindow_Settings(Me, ReadWrite.sWrite)
+        'If e.CloseReason = CloseReason.UserClosing Then
+        'e.Cancel = True
+        'Me.Hide()
+        'Exit Sub
+        'End If
+        gfrmScheduleLoaded = False
+        Me.Dispose()
+    End Sub
+
+    Private Sub SetFont(Optional incr As Integer = 0)
+        Dim BaseSize = 8
+        If BaseSize + My.Settings.FontSize + incr < 8 Or BaseSize + My.Settings.FontSize + incr > 15 Then Return
+        My.Settings.FontSize = My.Settings.FontSize + incr
+        My.Settings.Save()
+        Dim F = New Font(Font.FontFamily, BaseSize + My.Settings.FontSize, FontStyle.Regular)
+        Dim sizerow As Single
+        FpSpreadSchedule.Font = F
+        For i = 0 To ActiveSheet.Rows.Count - 1
+            sizerow = ActiveSheet.Rows(i).GetPreferredHeight()
+            ActiveSheet.Rows(i).Height = sizerow
+        Next
+        ActiveSheet.Columns(0).Width = ActiveSheet.Columns(0).GetPreferredWidth()
+        ActiveSheet.Columns(1).Width = ActiveSheet.Columns(1).GetPreferredWidth()
+
+    End Sub
+
+    Private Sub Schedule_Load(ByVal sender As Object, ByVal e As EventArgs) Handles Me.Load
+        Dim SPHeight As Integer
+        Dim I As Integer
+        Dim H As ToolStripControlHost
+        Me.DoubleBuffered = True
+        H = New ToolStripControlHost(DateTimePicker1)
+        ToolStrip1.Items.Insert(3, H)
+        FpSpreadSchedule.SetCursor(FarPoint.Win.Spread.CursorType.Normal, Windows.Forms.Cursors.Default)
+        FpSpreadSchedule.SetCursor(FarPoint.Win.Spread.CursorType.LockedCell, Windows.Forms.Cursors.Default)
+        ActiveSheet = FpSpreadSchedule.Sheets(0)
+        'gWindow_Settings(Me, ReadWrite.sRead)
+        Application.DoEvents()
+        Setup_Spread()
+        LoadingInd = True
+        DateTimePicker1.Value = Now
+        LoadingInd = False
+        Setup_Diags()
+        For I = 0 To FpSpreadDetails_Sheet1.RowCount - 1
+            FpSpreadDetails_Sheet1.SetRowHeight(I, CInt(FpSpreadDetails_Sheet1.Rows(I).GetPreferredHeight))
+            SPHeight = SPHeight + CInt(FpSpreadDetails_Sheet1.Rows(I).GetPreferredHeight)
+        Next
+        FpSpreadDetails.Height = SPHeight
+        FpSpreadProcedures.ActiveSheet.RowCount = 0
+        SetFont()
+        Load_Schedule()
+        Setup_Menus()
+        Timer1_Tick(Nothing, Nothing)
+        TimerResizeRows.Enabled = True
+    End Sub
+
+    Private Sub Setup_Spread()
+        Dim SQL As String
+        Dim Reader As SqlClient.SqlDataReader
+        Dim FP As FarPoint.Win.Spread.SheetView
+        Dim I As Integer = 0
+        Dim P As Integer
+        ' Office Settings
+        Dim StartTime As Integer
+        Dim WorkDayHours As Integer
+        Dim SplitInterval As Integer
+        Dim NumberPatientsPerInterval As Integer
+
+        SQL = "SELECT     OfficeID, StartTime, WorkDayHours, SplitInterval, NumberPatientsPerInterval FROM Offices WHERE OfficeID = " & gOfficeID
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then Exit Sub
+        If Reader.Read = True Then
+            StartTime = CInt(Val(Reader("StartTime").ToString) - 1)     ' Baecause the first hour starts from StartTime +1
+            WorkDayHours = CInt(Val(Reader("WorkDayHours").ToString))
+            SplitInterval = CInt(Val(Reader("SplitInterval").ToString))
+            NumberPatientsPerInterval = CInt(Val(Reader("NumberPatientsPerInterval").ToString))
+        Else
+            Exit Sub
+        End If
+        Reader = Nothing
+        FP = ActiveSheet
+        With FP
+            .RowCount = 0
+            For I = 0 To CInt(((60 / SplitInterval) * WorkDayHours) - 1)
+                If I Mod (60 / SplitInterval) = 0 Then
+                    StartTime = StartTime + 1
+                End If
+                For P = 0 To NumberPatientsPerInterval - 1
+                    .RowCount = .RowCount + 1
+                    .Cells(.RowCount - 1, 0).Text = CDate(StartTime & ":00").ToString("hh tt")
+                    .Cells(.RowCount - 1, 1).Text = CDate("1:" & (I Mod (60 / SplitInterval)) * SplitInterval).ToString("mm")
+                Next
+            Next
+            .SetColumnMerge(0, FarPoint.Win.Spread.Model.MergePolicy.Always)
+            .SetColumnMerge(1, FarPoint.Win.Spread.Model.MergePolicy.Always)
+        End With
+    End Sub
+
+    Private Sub Setup_Diags()
+        Dim SQL As String
+        Dim Reader As SqlClient.SqlDataReader
+        Dim FP As FarPoint.Win.Spread.SheetView
+        Dim I As Integer = 0
+        Dim CurDate As String
+        Dim Holiday As String = ""
+        ' Setup Cell Type
+        Dim CT As New FarPoint.Win.Spread.CellType.TextCellType
+        CurDate = DateTimePicker1.Value.DayOfWeek.ToString().Mid(1, 2)
+        Reader = gSQLGetDataReader("SELECT OffName From HolidaysOffDays Where DATEDIFF(d,  OffDate, '" & FormatDateTime(DateTimePicker1.Value, DateFormat.ShortDate) & "')=0")
+        If Not Reader Is Nothing Then
+            If Reader.HasRows Then
+                Reader.Read()
+                Holiday = Reader("OffName").ToString.ToUpper
+            End If
+        End If
+        SQL = "SELECT Su, Mo, Tu, We, Th, Fr, Sa, OfficeDiagnostics.DiagID, DiagName FROM OfficeDiagnostics inner Join Diagnostics on OfficeDiagnostics.DiagID = Diagnostics.DiagID WHERE Diagnostics.ActiveInd=1 and (Diagnostics.DiagTypeID=1 or Diagnostics.DiagTypeID=3) and Diagnostics.OfficeID = " & gOfficeID & " and OfficeDiagnostics.OfficeID = " & gOfficeID
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then Exit Sub
+        FP = ActiveSheet
+        gSpread_Settings(Me, FpSpreadSchedule, ReadWrite.sWrite)
+        With FP
+            .ColumnCount = 2
+            Do Until Reader.Read = False
+                .ColumnCount = .ColumnCount + 1
+                .Columns(.ColumnCount - 1).CellType = CT
+                .ColumnHeader.Columns(.ColumnCount - 1).Label = "" & Reader("DiagName").ToString
+                .ColumnHeader.Columns(.ColumnCount - 1).Tag = "" & Reader("DiagID").ToString
+                If Reader(CurDate).ToString = "1" And Holiday = "" Then
+                    .ColumnHeader.Columns(.ColumnCount - 1).Locked = False
+                    .Columns(.ColumnCount - 1).BackColor = Color.White
+                    .Columns(.ColumnCount - 1).Locked = False
+                Else
+                    If Holiday <> "" Then
+                        .ColumnHeader.Columns(.ColumnCount - 1).Label = Holiday
+                        .ColumnHeader.Columns(.ColumnCount - 1).BackColor = Color.Red
+                        .Columns(.ColumnCount - 1).BackColor = Color.MistyRose
+                    Else
+                        .Columns(.ColumnCount - 1).BackColor = Color.Silver
+                    End If
+                    .ColumnHeader.Columns(.ColumnCount - 1).Locked = True
+                    .Columns(.ColumnCount - 1).Locked = True
+                End If
+            Loop
+            Reader = Nothing
+        End With
+        gSpread_Settings(Me, FpSpreadSchedule, ReadWrite.sRead)
+        Resize_Rows()
+    End Sub
+
+    Private Sub FpSpreadSchedule_DragDropBlock(ByVal sender As Object, ByVal e As FarPoint.Win.Spread.DragDropBlockEventArgs) Handles FpSpreadSchedule.DragDropBlock
+        Dim C As FarPoint.Win.Spread.Cell = ActiveSheet.Cells(e.RowBegin, e.ColumnBegin)
+        Dim CD As FarPoint.Win.Spread.Cell = ActiveSheet.Cells(e.DestinationRowBegin, e.DestinationColumnBegin)
+        Dim DiagName As String
+        Dim SaveColor As Color = C.BackColor
+        Dim SIdest As ScheduleInfo = Nothing
+        SIdest = CType(CD.Tag, ScheduleInfo)
+        If (SIdest.SchedulkeBlockID) <> 0 Then
+            MsgBox("Selected schedule spot has been blocked by supervisor." & vbCrLf & "Unable to move to the Blocked schedule spot.", MsgBoxStyle.Exclamation)
+            e.Action = 0
+            e.Cancel = True
+            ActiveSheet.SetActiveCell(e.RowBegin, e.ColumnBegin)
+            Exit Sub
+        End If
+        DiagName = ActiveSheet.ColumnHeader.Columns(e.ColumnBegin).Label
+        If e.ColumnBegin = 0 Then
+            e.Action = 0
+            e.Cancel = True
+            Exit Sub
+        End If
+        If e.ColumnBegin = 1 Then
+            e.Action = 0
+            e.Cancel = True
+            Exit Sub
+        End If
+
+        If C.Text = "" Then
+            e.Action = 0
+            e.Cancel = True
+            Exit Sub
+        End If
+        If C.BackColor = Color.MediumAquamarine Then
+            MsgBox("Unable to move Completted schedule.", MsgBoxStyle.Exclamation)
+            e.Action = 0
+            e.Cancel = True
+            ActiveSheet.SetActiveCell(e.RowBegin, e.ColumnBegin)
+            Exit Sub
+        End If
+        If CD.Text <> "" Then
+            MsgBox("Unable to move schedule. The schedule time is busy.", MsgBoxStyle.Exclamation)
+            e.Action = 0
+            e.Cancel = True
+            ActiveSheet.SetActiveCell(e.RowBegin, e.ColumnBegin)
+            Exit Sub
+        End If
+        If CD.Locked Then
+            MsgBox("Unable to move schedule to the past time.", MsgBoxStyle.Exclamation)
+            e.Action = 0
+            e.Cancel = True
+            ActiveSheet.SetActiveCell(e.RowBegin, e.ColumnBegin)
+            Exit Sub
+        End If
+        If e.ColumnBegin <> e.DestinationColumnBegin Then
+            MsgBox("The [" & DiagName & "] schedule can be moved within the same [" & DiagName & "] diagnostic only.", MsgBoxStyle.Exclamation)
+            e.Action = 0
+            e.Cancel = True
+            ActiveSheet.SetActiveCell(e.RowBegin, e.ColumnBegin)
+            Exit Sub
+        End If
+        If C.BackColor = Color.Violet Then
+            MsgBox("Unable to reschedule appointment is the patient is already Shows Up", MsgBoxStyle.Exclamation)
+            e.Action = 0
+            e.Cancel = True
+            ActiveSheet.SetActiveCell(e.RowBegin, e.ColumnBegin)
+            Exit Sub
+        End If
+        e.Action = 0
+        e.Cancel = False
+    End Sub
+
+    Private Sub FpSpreadSchedule_DragDropBlockCompleted(ByVal sender As Object, ByVal e As FarPoint.Win.Spread.DragDropBlockCompletedEventArgs) Handles FpSpreadSchedule.DragDropBlockCompleted
+        Dim C As FarPoint.Win.Spread.Cell = ActiveSheet.Cells(e.RowBegin, e.ColumnBegin)
+        Dim CD As FarPoint.Win.Spread.Cell = ActiveSheet.Cells(e.DestinationRowBegin, e.DestinationColumnBegin)
+        Dim SchH As Integer = CInt(Val(ActiveSheet.Cells(CD.Row.Index, 0).Text))
+        Dim SchM As Integer = CInt(Val(ActiveSheet.Cells(CD.Row.Index, 1).Text))
+        Dim SchAM As String = ActiveSheet.Cells(CD.Row.Index, 0).Text.Mid(4, 2)
+        Dim ScheduleDateTime As Date = CDate(DateTimePicker1.Value.Date.ToString("MM/dd/yyyy") & " " & SchH & ":" & SchM & " " & SchAM)
+
+        Dim SI As ScheduleInfo = Nothing
+
+        SI.PickupTransportation = 0
+        SI.DestinationTransportation = 0
+        SI.PickupTransportationOther = ""
+        SI.DestinationTransportationOther = ""
+        SI.ScheduleID = 0
+        SI.PatientID = 0
+        C.Tag = SI
+        CD.Locked = False
+        gSQLUpdateData("UPDATE Schedule set ScheduleDateTime='" & ScheduleDateTime & "' Where  ScheduleID=" & CType(CD.Tag, ScheduleInfo).ScheduleID)
+        gUpdate_Profile_Log(CType(CD.Tag, ScheduleInfo).PatientID, PatientLogTypes.tScheduleChanged, "From: " & CType(CD.Tag, ScheduleInfo).ScheduleDateTime & " To: " & ScheduleDateTime)
+        Timer1_Tick(Nothing, Nothing)
+    End Sub
+
+    Private Sub FpSpread1_EditModeOn(ByVal sender As Object, ByVal e As EventArgs) Handles FpSpreadSchedule.EditModeOn
+        If ActiveSheet.ActiveCell.BackColor = Color.MediumAquamarine Then
+            FpSpreadSchedule.EditMode = False
+            Exit Sub
+        End If
+        If ActiveSheet.ActiveCell.Text <> "" Then
+            FpSpreadSchedule.EditMode = False
+            MarkAsDoneToolStripMenuItem_Click(Nothing, Nothing)
+            Exit Sub
+        End If
+        Dim SIdest As ScheduleInfo = Nothing
+        SIdest = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo)
+        If Val(SIdest.SchedulkeBlockID) <> 0 Then
+            MsgBox("Selected schedule spot has been blocked by supervisor." & vbCrLf & "Unable to schedule appointment to the Blocked schedule spot.", MsgBoxStyle.Exclamation)
+            FpSpreadSchedule.EditMode = False
+            Exit Sub
+        Else
+            Dim info As SpotInfo
+            Dim i As Integer = ActiveSheet.ActiveCell.Row.Index
+            Dim SchH As String = CInt(Val(ActiveSheet.Cells(i, 0).Text))
+            Dim SchM As String = CInt(Val(ActiveSheet.Cells(i, 1).Text))
+            Dim SchAM As String = ActiveSheet.Cells(i, 0).Text.Mid(4, 2)
+            Dim SchDate As String = DateTimePicker1.Value.Date
+            Dim AppTime As DateTime = CDate(SchDate & " " & SchH & ":" & SchM & " " & SchAM)
+
+            info = GetSpotLockedID(AppTime, CLng(ActiveSheet.ColumnHeader.Columns(ActiveSheet.ActiveColumn.Index).Tag))
+            If info.ID > 0 Then
+                SIdest.SchedulkeBlockID = info.ID
+                SIdest.ToolTip = info.ToolTip
+                ActiveSheet.ActiveCell.Locked = True
+                ActiveSheet.ActiveCell.Tag = SIdest
+                ActiveSheet.ActiveCell.Locked = True
+                ActiveSheet.ActiveCell.BackColor = Color.Gray
+                Dim CT As New FarPoint.Win.Spread.CellType.TextCellType
+                CT.BackgroundImage = New FarPoint.Win.Picture(My.Resources.ScheduleLocked)
+                CT.BackgroundImage.AlignHorz = FarPoint.Win.HorizontalAlignment.Left
+                CT.BackgroundImage.AlignVert = FarPoint.Win.VerticalAlignment.Center
+                'CT.BackgroundImage.Style = FarPoint.Win.RenderStyle.Tile
+                ActiveSheet.ActiveCell.CellType = CT
+                MsgBox("This selected schedule spot has been blocked by supervisor." & vbCrLf & "Unable to schedule appointment to the Blocked schedule spot.", MsgBoxStyle.Exclamation)
+                FpSpreadSchedule.EditMode = False
+                Exit Sub
+            End If
+        End If
+
+        If ActiveSheet.ActiveCell.Locked Then
+            FpSpreadSchedule.EditMode = False
+            Exit Sub
+        End If
+
+        If ActiveSheet.ActiveCell.Text = "" Then ActiveSheet.ActiveCell.Text = PressedKey
+        Application.DoEvents()
+        frmScheduleSearchPopup.CalledForm = Me
+        frmScheduleSearchPopup.SchDiagID = CLng(ActiveSheet.ColumnHeader.Columns(ActiveSheet.ActiveColumn.Index).Tag)
+        frmScheduleSearchPopup.SchDiagName = ActiveSheet.ActiveColumn.Label
+        frmScheduleSearchPopup.SchActiveCell = ActiveSheet.ActiveCell
+        frmScheduleSearchPopup.TextBoxSearch.Text = ActiveSheet.ActiveCell.Text
+        frmScheduleSearchPopup.TextBoxSearch.SelectionStart = Len(frmScheduleSearchPopup.TextBoxSearch.Text)
+        frmScheduleSearchPopup.SchH = CInt(Val(ActiveSheet.Cells(ActiveSheet.ActiveCell.Row.Index, 0).Text))
+        frmScheduleSearchPopup.SchM = CInt(Val(ActiveSheet.Cells(ActiveSheet.ActiveCell.Row.Index, 1).Text))
+        frmScheduleSearchPopup.SchAM = ActiveSheet.Cells(ActiveSheet.ActiveCell.Row.Index, 0).Text.Mid(4, 2)
+        frmScheduleSearchPopup.SchDate = DateTimePicker1.Value.Date
+        If frmScheduleSearchPopup.ListViewPatients.SelectedItems.Count > 0 Then
+            frmScheduleSearchPopup.Show_Details(CLng(frmScheduleSearchPopup.ListViewPatients.SelectedItems(0).Tag))
+        End If
+        FpSpreadSchedule.EditMode = False
+        ReturnSchName = ""
+        ReturnScheduleID = 0
+        ReturnSchPickupTransportation = 0
+        ReturnSchDestinationTransportation = 0
+        ReturnSchPickupTransportationOther = ""
+        ReturnSchDestinationTransportationOther = ""
+        Dim SaveRow As Integer = ActiveSheet.ActiveRowIndex
+        Dim SaveCol As Integer = ActiveSheet.ActiveColumnIndex
+        'Dim SI As ScheduleInfo
+        frmScheduleSearchPopup.MinimizeBox = False
+        frmScheduleSearchPopup.MaximizeBox = False
+
+        If frmScheduleSearchPopup.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+            Load_Schedule()
+            Timer1_Tick(Nothing, Nothing)
+            ActiveSheet.SetActiveCell(SaveRow, SaveCol)
+            If ReturnUserID > 0 Then
+                gLockWindowUpdate(Me.Handle, False)
+                Show_Details(ReturnUserID)
+                gLockWindowUpdate(Me.Handle, True)
+            End If
+        Else
+            If ActiveSheet.ActiveCell.Text.Length = 1 Then
+                ActiveSheet.ActiveCell.Text = ""
+            End If
+        End If
+        PressedKey = ""
+        Setup_Menus()
+
+    End Sub
+
+    Private Sub ClearScheduleToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ClearScheduleToolStripMenuItem.Click
+        Dim SI As ScheduleInfo = Nothing
+        Dim CL As FarPoint.Win.Spread.Cell = ActiveSheet.ActiveCell
+        Dim ApprovedByID As Long = 0
+        Dim ApprovedByName As String = ""
+        Dim Comments As String = ""
+        Dim AmountPaid As Double = 0
+        Dim BillID As Long
+        Dim CancelMessage As String
+        FpSpreadSchedule.Focus()
+        If CL Is Nothing Then Exit Sub
+        If Val(CType(CL.Tag, ScheduleInfo).ScheduleID) = 0 Then Exit Sub
+
+        Dim SchH As Integer = CInt(Val(ActiveSheet.Cells(ActiveSheet.ActiveRowIndex, 0).Text))
+        Dim SchM As Integer = CInt(Val(ActiveSheet.Cells(ActiveSheet.ActiveRowIndex, 1).Text))
+        Dim SchAM As String = ActiveSheet.Cells(ActiveSheet.ActiveRowIndex, 0).Text.Mid(4, 2)
+        Dim SchDate As String = DateTimePicker1.Value.Date
+        Dim ScheduleTime As String = SchDate & " " & SchH & ":" & SchM & SchAM
+        Dim PatientID As Long = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID
+        If CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).CaseTypeID = 4 And ActiveSheet.ActiveCell.BackColor = Color.Violet Then
+            BillID = gSQLGetSingleValue("select BillID from Bills where ScheduleID = " & CType(CL.Tag, ScheduleInfo).ScheduleID)
+            AmountPaid = gSQLGetSingleValue("SELECT     sum(PaymentAmount) FROM BillPayments where BillID=" & BillID)
+            If gCurrentEmployee.PositionID > 3 Then
+                frmSupervisorApproval.LabelMsg.Text = "Cash Appointment Cancelation." & IIf(AmountPaid > 0, vbCrLf & vbCrLf & "Refund Paid Amount:" & AmountPaid.ToString("c") & ".", "")
+                If frmSupervisorApproval.ShowDialog <> Windows.Forms.DialogResult.OK Then
+                    frmSupervisorApproval.Dispose()
+                    Exit Sub
+                End If
+                ApprovedByID = frmSupervisorApproval.SupervisorID
+                ApprovedByName = frmSupervisorApproval.SupervisorName
+                frmSupervisorApproval.Dispose()
+                If AmountPaid > 0 Then
+                    Comments = "Procedure Schedule " & ScheduleTime & " Cancelation And Payment " & AmountPaid.ToString("c") & " Refund Approved"
+                Else
+                    Comments = "Procedure Schedule " & ScheduleTime & " Cancelation."
+                End If
+            Else
+                If MsgBox("Cash Appointment Cancelation." & IIf(AmountPaid > 0, vbCrLf & vbCrLf & "Refund Paid Amount:" & AmountPaid.ToString("c") & ".", "") & vbCrLf & vbCrLf & "Are you approving this cancelation?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = vbNo Then
+                    Exit Sub
+                End If
+                If AmountPaid > 0 Then
+                    Comments = "Procedure Schedule " & ScheduleTime & " Cancelation And Payment " & AmountPaid & " Refund Approved"
+                Else
+                    Comments = "Procedure Schedule " & ScheduleTime & " Cancelation."
+                End If
+                ApprovedByName = gCurrentEmployee.FName & " " & gCurrentEmployee.LName
+            End If
+            If AmountPaid > 0 Then
+                MsgBox("Appointment has been canceled." & vbCrLf & vbCrLf & "Please refund " & AmountPaid.ToString("c") & " to patient.", MsgBoxStyle.Information)
+            Else
+                MsgBox("Appointment has been canceled.", MsgBoxStyle.Information)
+            End If
+            gUpdate_Profile_Log(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID, PatientLogTypes.tScheduleCanceled, Comments, ApprovedByName)
+            gSQLUpdateData("UPDATE BILLS SET PaidAmount=0, BillStatusID=8 WHERE BillID=" & BillID)
+            gSQLUpdateData("DELETE FROM BillPayments WHERE BillID=" & BillID)
+        Else
+
+            CancelMessage = "Please confirm you want to Cancel Appointment for the " & CL.Text & "?"
+            If Val(FpSpreadDetails_Sheet1.Cells(0, 0).Tag) = 2 Then
+                CancelMessage = CancelMessage & vbCrLf & vbCrLf & "Inform the patient that No More Appointments will be allowed!" & vbCrLf & vbCrLf & "Too many Cancelations / Reschedules!" & vbCrLf & vbCrLf & "We can continue to service this patient with no schedule only."
+            End If
+            If MsgBox(CancelMessage, MsgBoxStyle.Exclamation Or MsgBoxStyle.YesNo) = MsgBoxResult.No Then Exit Sub
+            gUpdate_Profile_Log(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID, PatientLogTypes.tScheduleCanceled, "Canceled Schedule  " & ScheduleTime, ApprovedByName)
+        End If
+        gSQLUpdateData("UPDATE PatientProcedures set PatientSignature=Null, TechSignature=null, UpdatedByEmpID=" & gCurrentEmployee.EmpID.ToString & ", UpdatedDT=getdate(), ProcedureStatusID = 0, ScheduleID=Null Where ScheduleID=" & CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).ScheduleID)
+        gSQLDeleteRecord("Delete From Schedule Where ScheduleID=" & CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).ScheduleID)
+        '1- Reschedule
+        '2-Cancelation
+        'If FormatDateTime(ScheduleTime, 2) = FormatDateTime(Now, 2) Then
+        gSQLUpdateData("INSERT INTO PatientReschedulesCancelations (PatientID, ReScheduleCancelInd, Comments, ProcessedBy) VALUES(" & Val(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID) & ",2,'" & ScheduleTime & "'," & gCurrentEmployee.EmpID & " )")
+        'End If
+
+        SI.PickupTransportation = 0
+        SI.DestinationTransportationOther = 0
+        SI.PickupTransportationOther = ""
+        SI.DestinationTransportationOther = ""
+        SI.ScheduleID = 0
+        SI.PatientID = 0
+        CL.Text = ""
+        CL.Tag = SI
+        Clear_Details()
+        CL.BackColor = Color.White
+        CL.CellType = Nothing
+        Calculate_Totals()
+        Timer1_Tick(Nothing, Nothing)
+    End Sub
+
+    Public Sub Clear_Details()
+        Dim I As Integer
+        Dim SPHeight As Integer
+
+        FpSpreadDetails_Sheet1.RowCount = 12
+        '        FpSpreadDetails_Sheet1.Visible = False
+        For I = 0 To FpSpreadDetails_Sheet1.RowCount - 1
+            FpSpreadDetails_Sheet1.SetText(I, 1, "")
+            FpSpreadDetails_Sheet1.SetRowHeight(I, CInt(FpSpreadDetails_Sheet1.Rows(I).GetPreferredHeight))
+            SPHeight = SPHeight + CInt(FpSpreadDetails_Sheet1.Rows(I).GetPreferredHeight)
+        Next
+        PatientComments = ""
+        FpSpreadDetails.Height = SPHeight
+        FpSpreadProcedures.ActiveSheet.RowCount = 0
+        gSpreadActivateCell(FpSpreadDetails)
+        gSpreadActivateCell(FpSpreadProcedures)
+
+    End Sub
+
+    Private Sub FindPatientToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles FindPatientToolStripMenuItem.Click
+        Dim CL As FarPoint.Win.Spread.Cell = ActiveSheet.ActiveCell
+        FpSpreadSchedule.Focus()
+        If CL Is Nothing Then Exit Sub
+        ActiveSheet.ActiveRowIndex = CL.Row.Index
+        If CL.Column.Index < 2 Then
+            ActiveSheet.ActiveColumnIndex = 2
+        Else
+            ActiveSheet.ActiveColumnIndex = CL.Column.Index
+        End If
+        FpSpreadSchedule.EditMode = True
+    End Sub
+
+    Private savePatId As Integer
+
+    Public Sub FpSpread1_EnterCell(ByVal sender As Object, ByVal e As FarPoint.Win.Spread.EnterCellEventArgs) Handles FpSpreadSchedule.EnterCell
+        Panel3.SuspendLayout()
+        Clear_Details()
+        If ActiveSheet.ActiveCell Is Nothing Then Exit Sub
+        Dim SIdest As ScheduleInfo = Nothing
+        SIdest = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo)
+        If Val(SIdest.SchedulkeBlockID) <> 0 Then
+            Exit Sub
+        End If
+
+        If e.Column < 2 Then
+            PrintProceduresFormToolStripMenuItem.Visible = False
+            cmdProcedureForm.Enabled = False
+            FindPatientToolStripMenuItem.Visible = False
+            TransportationToolStripMenuItem.Visible = False
+            MarkAsDoneToolStripMenuItem.Visible = False
+            ShowPatientsInformationToolStripMenuItem.Visible = False
+            cmdComments.Enabled = False
+            CommentsToolStripMenu.Visible = False
+            ShowPatientInfoToolStripSeparator1.Visible = False
+            ClearScheduleToolStripMenuItem.Visible = False
+            CancelAppointmentToolStripSeparator1.Visible = False
+            cmdTransport.Enabled = False
+            cmdAdd.Enabled = False
+            cmdDelete.Enabled = False
+            cmdDone.Enabled = False
+            SetAsUnDoneToolStripMenuItem.Visible = False
+            Exit Sub
+        End If
+        If savePatId = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID Then
+            Panel3.ResumeLayout()
+            Return
+        End If
+        If Val(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID) <> 0 Then
+            savePatId = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID
+            Clear_Details()
+            Show_Details(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID)
+        Else
+            savePatId = 0
+            Clear_Details()
+        End If
+        Panel3.ResumeLayout()
+        Setup_Menus()
+        FpSpreadSchedule.Focus()
+    End Sub
+
+    Public PatientComments As String
+
+    Public Sub Show_Details(ByVal ID As Long)
+        Dim Reader As SqlClient.SqlDataReader
+        Dim SQL As String
+        Dim lCell As String
+        Dim I As Integer
+        Dim SPHeight As Integer
+        Dim CR As Integer
+        Clear_Details()
+        'Panel3.SuspendLayout()
+        gSpreadActivateCell(FpSpreadDetails, 0, 0, True)
+        gSpreadActivateCell(FpSpreadProcedures, 0, 0, True)
+
+        SQL = "SELECT  CaseTypes.Description as CaseType, Patients.NoMoreAppointmentsInd, Patients.CaseTypeID, Patients.ParentsRequiredInd, Patients.DOA, Patients.PatientID,  Patients.FName, Patients.MI, Patients.LName, Patients.DOB, Patients.Phone1, Patients.Phone2, Patients.CellPhone, Patients.Address1, Patients.Address2, Patients.City, Patients.State, Patients.Zip, InsuranceCompanies_1.CompanyName AS Insurance1, InsuranceCompanies.CompanyName AS Insurance2, "
+        SQL = SQL & " Patients.ReferringDoctor, ReferringOffices.OfficeName AS ReferringCompany, ReferringOffices.Phone1 AS RefPhone1, ReferringOffices.Phone2 AS RefPhone2, ReferringOffices.Phone3 AS RefPhone3, "
+        SQL = SQL & " TransportationCompanies.CompanyName AS Transportation, TransportationCompanies.Phone1 AS TransPhone1, TransportationCompanies.Phone2 AS TransPhone2, TransportationCompanies.Phone3 AS TransPhone3, Patients.Comments "
+        SQL = SQL & " FROM Patients LEFT OUTER JOIN TransportationCompanies ON Patients.TransportationCompanyID = TransportationCompanies.CompanyID LEFT OUTER JOIN ReferringOffices ON Patients.ReferringCompanyID = ReferringOffices.OfficeID LEFT OUTER JOIN InsuranceCompanies ON Patients.InsuranceCompanyID1 = InsuranceCompanies.CompanyID LEFT OUTER JOIN InsuranceCompanies AS InsuranceCompanies_1 ON Patients.InsuranceCompanyID = InsuranceCompanies_1.CompanyID Inner Join CaseTypes on Patients.CaseTypeID = CaseTypes.CaseTypeID"
+        SQL = SQL & " WHERE Patients.PatientID = " & ID
+        CR = gSQLGetSingleValue("select COUNT(*) from PatientReschedulesCancelations Where PatientID =" & ID)
+        Reader = gSQLGetDataReader(SQL.ToString())
+
+        If Reader Is Nothing Then Exit Sub
+        Panel3.SuspendLayout()
+        FpSpreadDetails.ShowRow(FpSpreadDetails.GetActiveRowViewportIndex, 0, FarPoint.Win.Spread.VerticalPosition.Top)
+        FpSpreadProcedures.ShowRow(FpSpreadDetails.GetActiveRowViewportIndex, 0, FarPoint.Win.Spread.VerticalPosition.Top)
+        With FpSpreadDetails_Sheet1
+            Do Until Reader.Read = False
+                PatientComments = Reader("Comments").ToString.Trim
+                .SetText(0, 1, Reader("PatientID").ToString & "   /   " & Reader("CaseType").ToString & "   /   " & "CR: " & CR)
+                .Cells(0, 1).Tag = Val(Reader("CaseTypeID").ToString)
+                .Cells(0, 0).Tag = "0"
+                If Val(Reader("NoMoreAppointmentsInd").ToString) > 0 Then
+                    .Cells(0, 0).Tag = "1"
+                ElseIf CR >= gCancelationDrop Then
+                    .Cells(0, 0).Tag = "2"
+                End If
+                If CR >= gCancelationDrop Then
+                    .Cells(0, 1).ForeColor = Color.Red
+                    .Cells(0, 0).ForeColor = Color.Red
+                    .SetText(0, 1, .GetText(0, 1) & " - DROP")
+                ElseIf CR >= gCancelationWarning Then
+                    .Cells(0, 1).ForeColor = Color.Red
+                    .Cells(0, 0).ForeColor = Color.Red
+                    .SetText(0, 1, .GetText(0, 1) & "  !!!")
+                Else
+                    .Cells(0, 1).ForeColor = Color.Black
+                    .Cells(0, 0).ForeColor = Color.Black
+                End If
+                .Cells(1, 0).ForeColor = Color.Black
+                .Cells(1, 1).ForeColor = Color.Black
+                If IsDate(Reader("DOA").ToString) Then
+                    .SetText(1, 1, CDate(Reader("DOA").ToString).ToString("MM/dd/yyyy"))
+                    If Val(Reader("CaseTypeID").ToString) < 3 Then
+                        If DateDiff(DateInterval.Day, CDate(Reader("DOA").ToString), Now) >= Val(gDOAAge) Then
+                            .SetText(1, 1, CDate(Reader("DOA").ToString).ToString("MM/dd/yyyy"))
+                            .Cells(1, 0).ForeColor = Color.Red
+                            .Cells(1, 1).ForeColor = Color.Red
+                        End If
+                    End If
+                End If
+
+                .SetText(2, 1, Reader("Fname").ToString & " " & Reader("MI").ToString & " " & Reader("Lname").ToString)
+
+                If Reader("Phone1").ToString <> "" And Reader("Phone1").ToString <> "" Then .SetText(3, 1, Reader("Phone1").ToString)
+                If Reader("CellPhone").ToString <> "" And Reader("CellPhone").ToString <> "" Then .SetText(4, 1, Reader("CellPhone").ToString)
+                If Reader("Phone2").ToString <> "" And Reader("Phone2").ToString <> "" Then .SetText(5, 1, Reader("Phone2").ToString)
+                .SetText(6, 1, Reader("Address1").ToString & " " & Reader("Address2").ToString & IIf(Reader("City").ToString <> "", ", " & Reader("City").ToString, "").ToString & IIf(Reader("State").ToString <> "", ", " & Reader("State").ToString, "").ToString & IIf(Replace(Reader("Zip").ToString, "_", "") <> "", ", " & Reader("Zip").ToString, "").ToString)
+                .SetText(7, 1, Reader("Insurance1").ToString)
+                .SetText(8, 1, Reader("Insurance2").ToString)
+                lCell = Reader("ReferringCompany").ToString
+                lCell = lCell & IIf(Reader("RefPhone1").ToString <> "" And Reader("RefPhone1").ToString <> "", vbCrLf & Reader("RefPhone1").ToString, "").ToString
+                lCell = lCell & IIf(Reader("RefPhone2").ToString <> "" And Reader("RefPhone2").ToString <> "", vbCrLf & Reader("RefPhone2").ToString, "").ToString
+                lCell = lCell & IIf(Reader("RefPhone3").ToString <> "" And Reader("RefPhone3").ToString <> "", vbCrLf & Reader("RefPhone3").ToString, "").ToString
+                lCell = lCell & IIf(Reader("ReferringDoctor").ToString <> "", vbCrLf & Reader("ReferringDoctor").ToString, "").ToString
+
+                .SetText(9, 1, lCell)
+                lCell = Reader("Transportation").ToString
+                lCell = lCell & IIf(Reader("TransPhone1").ToString <> "" And Reader("TransPhone1").ToString <> "", vbCrLf & Reader("TransPhone1").ToString, "").ToString
+                lCell = lCell & IIf(Reader("TransPhone2").ToString <> "" And Reader("TransPhone2").ToString <> "", vbCrLf & Reader("TransPhone2").ToString, "").ToString
+                lCell = lCell & IIf(Reader("TransPhone3").ToString <> "" And Reader("TransPhone3").ToString <> "", vbCrLf & Reader("TransPhone3").ToString, "").ToString
+                .SetText(10, 1, lCell)
+                .SetText(11, 1, Reader("Comments").ToString.Trim)
+                .Cells(11, 1).ForeColor = Color.Chocolate
+                If Val(Reader("ParentsRequiredInd").ToString) = 1 Then
+                    .RowCount = .RowCount + 1
+                    .SetText(.RowCount - 1, 0, "Attention")
+                    .SetText(.RowCount - 1, 1, "Underage Patient!")
+                    .Cells(.RowCount - 1, 0).ForeColor = Color.Red
+                    .Cells(.RowCount - 1, 1).ForeColor = Color.Red
+                End If
+                If Val(Reader("NoMoreAppointmentsInd").ToString) > 0 Or CR >= gCancelationDrop Then
+                    .RowCount = .RowCount + 1
+                    .SetText(.RowCount - 1, 0, "Attention")
+                    If Val(Reader("NoMoreAppointmentsInd").ToString) = 0 Then
+                        .SetText(.RowCount - 1, 1, "No More Appointments! [CR]")
+                    Else
+                        .SetText(.RowCount - 1, 1, "No More Appointments!")
+                    End If
+                    .Cells(.RowCount - 1, 0).ForeColor = Color.Red
+                    .Cells(.RowCount - 1, 1).ForeColor = Color.Red
+
+                End If
+            Loop
+
+            For I = 0 To .RowCount - 1
+                .SetRowHeight(I, CInt(.Rows(I).GetPreferredHeight))
+                SPHeight = SPHeight + CInt(.Rows(I).GetPreferredHeight)
+            Next
+        End With
+        FpSpreadDetails.Height = SPHeight
+        FpSpreadProcedures.Top = SPHeight
+        FpSpreadProcedures.Height = 1000
+        SQL = "SELECT     PatientProcedures.PatientProcedureID, PatientProcedures.ProcID, PatientProcedures.DiagID, PatientProcedures.ProcedureStatusID, Procedures.ProcName, Schedule.ScheduleDateTime "
+        SQL = SQL & " FROM         PatientProcedures INNER JOIN Procedures ON PatientProcedures.ProcID = Procedures.ProcID LEFT OUTER JOIN Schedule ON PatientProcedures.ScheduleID = Schedule.ScheduleID "
+        SQL = SQL & " WHERE PatientProcedures.PatientID = " & ID
+        SQL = SQL & " Order by PatientProcedures.ProcID "
+        Reader = gSQLGetDataReader(SQL.ToString())
+        FpSpreadProcedures.ActiveSheet.RowCount = 0
+
+        If Reader Is Nothing Then Panel3.ResumeLayout(True) : Exit Sub
+        With FpSpreadProcedures.ActiveSheet
+            Do Until Reader.Read = False
+
+                .RowCount = .RowCount + 1
+                .SetText(.RowCount - 1, 0, Val(Reader("ProcedureStatusID").ToString).ToString)
+                .SetText(.RowCount - 1, 1, Reader("ProcName").ToString)
+                .SetText(.RowCount - 1, 2, "")
+                If Reader("ScheduleDateTime").ToString <> "" Then
+                    If Val(Reader("ProcedureStatusID").ToString) = 1 And DateDiff(DateInterval.Hour, CDate(Reader("ScheduleDateTime")), Now) > gNoShowHours Then
+                        .Cells(.RowCount - 1, 1).ForeColor = Color.DarkRed
+                        .Cells(.RowCount - 1, 1).Font = New Font(FpSpreadProcedures.Font, FontStyle.Bold)
+                    End If
+                    .SetText(.RowCount - 1, 2, CDate(Reader("ScheduleDateTime")).ToString("MM/dd/yy hh:mm tt"))
+                End If
+                .SetRowHeight(.RowCount - 1, CInt(.Rows(.RowCount - 1).GetPreferredHeight + 2))
+            Loop
+        End With
+
+        'FpSpreadProcedures.Dock = DockStyle.Fill
+        Panel3.ResumeLayout(True)
+
+        gSpreadActivateCell(FpSpreadDetails)
+        gSpreadActivateCell(FpSpreadProcedures)
+        'FpSpreadDetails_Sheet1.Visible = True
+
+    End Sub
+
+    Public Sub Load_Schedule()
+        Dim Reader As SqlClient.SqlDataReader
+        Dim SQL As String
+        Dim AppTime As DateTime
+        Dim SchH As Integer
+        Dim SchM As Integer
+        Dim SchAM As String
+        Dim I As Integer
+        Dim C As Integer
+        Dim SI As ScheduleInfo = Nothing
+        Application.DoEvents()
+        If LoadingInd = True Then Exit Sub
+        SI.ScheduleID = 0
+        SI.PatientID = 0
+        SI.ScheduleID = 0
+        SI.PickupTransportation = 0
+        SI.DestinationTransportation = 0
+        SI.PickupTransportationOther = ""
+        SI.DestinationTransportationOther = ""
+
+        SI.ToolTip = ""
+        For I = 0 To ActiveSheet.RowCount - 1
+            For C = 2 To ActiveSheet.ColumnCount - 1
+                SI.PatientID = 0
+                SI.ScheduleID = 0
+                SI.PickupTransportation = 0
+                SI.DestinationTransportation = 0
+                SI.PickupTransportationOther = ""
+                SI.DestinationTransportationOther = ""
+                ActiveSheet.Cells(I, C).Text = ""
+                ActiveSheet.Cells(I, C).Tag = SI
+                ActiveSheet.Cells(I, C).CellType = Nothing
+                ActiveSheet.Cells(I, C).BackColor = Color.White
+                ActiveSheet.Cells(I, C).ForeColor = Color.Black
+                If ActiveSheet.Columns(C).Locked = False Then
+                    ActiveSheet.Cells(I, C).BackColor = Color.Transparent
+                End If
+            Next
+        Next
+        SQL = "SELECT  PreCertificationDT, Schedule.ConfirmedBy, Schedule.ShowUpDatetime, Schedule.ToolTip, Patients.Phone1, Patients.Phone2, Patients.CellPhone, Patients.CaseTypeID, Patients.FName, Patients.MI, Patients.LName, Schedule.ScheduleID, PatientProcedures.DiagID, Schedule.PickupTransportation, Schedule.DestinationTransportation, Schedule.PickupTransportationOther, Schedule.DestinationTransportationOther, Schedule.ScheduleDateTime, PatientProcedures.PatientID, MIN(PatientProcedures.ProcedureStatusID) AS ScheduleStatusID"
+        SQL = SQL & " FROM PatientProcedures INNER JOIN Patients ON Patients.PatientID = PatientProcedures.PatientID INNER JOIN Schedule ON Schedule.ScheduleID = PatientProcedures.ScheduleID "
+        SQL = SQL & " WHERE PatientProcedures.ProcedureStatusID<>0 and PatientProcedures.OfficeID = " & gOfficeID & " and ScheduleDateTime > '" & DateTimePicker1.Value.Date & " 00:00" & "' and ScheduleDateTime < '" & DateTimePicker1.Value.Date & " 23:59" & "' "
+        SQL = SQL & " GROUP BY  PreCertificationDT, Schedule.ConfirmedBy, Schedule.ShowUpDatetime, Schedule.ToolTip, Patients.Phone1, Patients.Phone2, Patients.CellPhone, Patients.CaseTypeID, Patients.FName, Patients.MI, Patients.LName, Schedule.ScheduleID, PatientProcedures.DiagID, Schedule.PickupTransportation, Schedule.DestinationTransportation, Schedule.ScheduleDateTime, PatientProcedures.PatientID, Schedule.PickupTransportationOther, Schedule.DestinationTransportationOther "
+        Reader = gSQLGetDataReader(SQL)
+        Dim ToolTip As String = ""
+        If Reader Is Nothing Then Exit Sub
+        Do Until Reader.Read = False
+
+            AppTime = CDate(CDate(Reader("ScheduleDateTime").ToString).ToString("hh:mm tt"))
+            For I = 0 To ActiveSheet.RowCount - 1
+                SchH = CInt(Val(ActiveSheet.Cells(I, 0).Text))
+                SchM = CInt(Val(ActiveSheet.Cells(I, 1).Text))
+                SchAM = ActiveSheet.Cells(I, 0).Text.Mid(4, 2)
+                SI = New ScheduleInfo
+                If AppTime = CDate(CDate(SchH & ":" & SchM & " " & SchAM).ToString("hh:mm tt")) Then
+                    For C = 2 To ActiveSheet.ColumnCount - 1
+                        ToolTip = ""
+                        'ActiveSheet.Cells(I, C).BackColor = Color.White
+                        'ActiveSheet.Cells(I, C).ForeColor = Color.Black
+
+                        'ActiveSheet.Cells(I, C).Text = ""
+                        SI.SchedulkeBlockID = 0
+                        SI.ScheduleDateTime = AppTime
+                        SI.PatientPhone = Reader("Phone1").ToString & IIf(Reader("Phone2").ToString <> "", ", " & Reader("Phone2").ToString, "") & IIf(Reader("Phone2").ToString <> "", ", Cell: " & Reader("CellPhone").ToString, "")
+                        SI.PatientID = CLng(Val(Reader("PatientID").ToString))
+                        SI.ScheduleID = CLng(Val(Reader("ScheduleID").ToString))
+                        SI.PickupTransportation = CInt(Val(Reader("PickupTransportation").ToString))
+                        If SI.PickupTransportation = 3 Then
+                            SI.PickupTransportationOther = Reader("PickupTransportationOther").ToString
+                        Else
+                            SI.PickupTransportationOther = ""
+                        End If
+                        SI.DestinationTransportation = CInt(Val(Reader("DestinationTransportation").ToString))
+                        If SI.DestinationTransportation = 3 Then
+                            SI.DestinationTransportationOther = Reader("DestinationTransportationOther").ToString
+                        Else
+                            SI.DestinationTransportationOther = ""
+                        End If
+                        SI.CaseTypeID = CLng(Val(Reader("CaseTypeID").ToString))
+                        SI.PreCertificationDT = Reader("PreCertificationDT").ToString
+                        If IsDate(Reader("ShowUpDatetime").ToString) Then
+                            SI.ShowUpDateTime = Reader("ShowUpDatetime").ToString
+                        End If
+                        SI.ConfirmedBy = Reader("ConfirmedBy").ToString
+
+                        If SI.PickupTransportation = 1 Then
+                            ToolTip = ToolTip & "PU: Home"
+                        ElseIf SI.PickupTransportation = 2 Then
+                            ToolTip = ToolTip & "PU: Referring Office"
+                        ElseIf SI.PickupTransportation = 3 Then
+                            ToolTip = ToolTip & SI.PickupTransportationOther.Trim()
+                        End If
+                        If ToolTip <> "" Then ToolTip = ToolTip & vbCrLf
+                        If SI.DestinationTransportation = 1 Then
+                            ToolTip = ToolTip & "DO: Home"
+                        ElseIf SI.DestinationTransportation = 2 Then
+                            ToolTip = ToolTip & "DO: Referring Office"
+                        ElseIf SI.DestinationTransportation = 3 Then
+                            ToolTip = ToolTip & SI.DestinationTransportationOther.Trim()
+                        End If
+                        If ToolTip <> "" Then ToolTip = ToolTip & vbCrLf & vbCrLf
+                        ToolTip = ToolTip & Reader("ToolTip").ToString
+                        SI.ToolTip = ToolTip
+                        If Val(Reader("DiagID").ToString) = Val(ActiveSheet.Columns(C).Tag) Then
+                            ActiveSheet.Cells(I, C).Text = Reader("Fname").ToString & " " & IIf(Reader("MI").ToString <> "", Reader("MI").ToString & " ", "").ToString & Reader("Lname").ToString
+                            If IsDate(SI.PreCertificationDT) Or gOfficeTypeID = 2 Or gOfficeTypeID = 1 Then
+                                ActiveSheet.Cells(I, C).ForeColor = Color.Black
+                            Else
+                                ActiveSheet.Cells(I, C).ForeColor = Color.Red
+                                SI.ToolTip = "No Pre-Certification!" & vbCrLf & vbCrLf & SI.ToolTip
+                            End If
+
+                            ActiveSheet.Cells(I, C).Tag = SI
+                            If Val(Reader("ScheduleStatusID").ToString) = 1 Then
+                                If IsDate(Reader("ShowUpDatetime").ToString) Then
+                                    ActiveSheet.Cells(I, C).BackColor = Color.Violet
+                                Else
+                                    If Reader("ConfirmedBy").ToString <> "" Then
+                                        ActiveSheet.Cells(I, C).BackColor = Color.BurlyWood
+                                    Else
+                                        ActiveSheet.Cells(I, C).BackColor = Color.Khaki
+                                    End If
+                                End If
+                            ElseIf Val(Reader("ScheduleStatusID").ToString) = 2 Then
+                                ActiveSheet.Cells(I, C).BackColor = Color.MediumAquamarine
+                                ActiveSheet.ActiveCell.Locked = True
+                            End If
+
+                            If Val(Reader("PickupTransportation").ToString) > 0 Or Val(Reader("DestinationTransportation").ToString) > 0 Then
+                                Dim CT As New FarPoint.Win.Spread.CellType.TextCellType
+                                CT.BackgroundImage = New FarPoint.Win.Picture(PictureBoxTransportation.Image)
+                                CT.BackgroundImage.AlignHorz = FarPoint.Win.HorizontalAlignment.Right
+                                CT.BackgroundImage.AlignVert = FarPoint.Win.VerticalAlignment.Center
+                                ActiveSheet.Cells(I, C).CellType = CT
+                            End If
+                            GoTo NextSchedule
+                        End If
+                    Next
+                End If
+            Next
+NextSchedule:
+        Loop
+        Load_Block_Spots()
+        Calculate_Totals()
+    End Sub
+
+    Private Sub Load_Block_Spots()
+        Dim SQL As String
+        Dim BlockTime As DateTime
+        Dim SchH As Integer
+        Dim SchM As Integer
+        Dim SchAM As String
+        Dim I As Integer
+        Dim C As Integer
+        Dim SI As ScheduleInfo = Nothing
+
+        Dim Reader As SqlClient.SqlDataReader
+        Reader = GetBlockedSpots(DateTimePicker1.Value.Date)
+        If Reader Is Nothing Then Return
+        Dim ToolTip As String = ""
+        If Reader Is Nothing Then Exit Sub
+        Do Until Reader.Read = False
+
+            BlockTime = CDate(CDate(Reader("ScheduleDateTime").ToString).ToString("hh:mm tt"))
+            For I = 0 To ActiveSheet.RowCount - 1
+                SchH = CInt(Val(ActiveSheet.Cells(I, 0).Text))
+                SchM = CInt(Val(ActiveSheet.Cells(I, 1).Text))
+                SchAM = ActiveSheet.Cells(I, 0).Text.Mid(4, 2)
+                If BlockTime = CDate(CDate(SchH & ":" & SchM & " " & SchAM).ToString("hh:mm tt")) Then
+                    For C = 2 To ActiveSheet.ColumnCount - 1
+                        SI = ActiveSheet.Cells(I, C).Tag
+                        SI.SchedulkeBlockID = 0
+                        If ActiveSheet.Cells(I, C).Text = "" Then
+                            ActiveSheet.Cells(I, C).Locked = False
+                            ActiveSheet.Cells(I, C).BackColor = Color.White
+                        End If
+                        If CLng(ActiveSheet.ColumnHeader.Columns(C).Tag) = CLng(Val(Reader("DiagID").ToString)) Then
+                            SI.SchedulkeBlockID = Val(Reader("ID").ToString)
+                            SI.ToolTip = "" & Reader("Comments").ToString()
+                            SI.ToolTip = SI.ToolTip & vbCrLf & "" & Reader("EmpName").ToString()
+                            ActiveSheet.Cells(I, C).Tag = SI
+                            ActiveSheet.Cells(I, C).Locked = True
+                            ActiveSheet.Cells(I, C).BackColor = Color.Gray
+                            Dim CT As New FarPoint.Win.Spread.CellType.TextCellType
+                            CT.BackgroundImage = New FarPoint.Win.Picture(My.Resources.ScheduleLocked)
+                            CT.BackgroundImage.AlignHorz = FarPoint.Win.HorizontalAlignment.Left
+                            CT.BackgroundImage.AlignVert = FarPoint.Win.VerticalAlignment.Center
+                            'CT.BackgroundImage.Style = FarPoint.Win.RenderStyle.Tile
+                            ActiveSheet.Cells(I, C).CellType = CT
+
+                        End If
+                    Next
+                End If
+            Next
+        Loop
+    End Sub
+
+    Public Sub DateTimePicker1_ValueChanged(ByVal sender As Object, ByVal e As EventArgs) Handles DateTimePicker1.ValueChanged
+        If LoadingInd = True Then Exit Sub
+        Application.DoEvents()
+        Clear_Details()
+        Setup_Diags()
+        Load_Schedule()
+        Setup_Menus()
+        Timer1_Tick(Nothing, Nothing)
+    End Sub
+
+    Private Sub FpSpread1_KeyPress(ByVal sender As Object, ByVal e As Windows.Forms.KeyPressEventArgs) Handles FpSpreadSchedule.KeyPress
+        PressedKey = e.KeyChar
+    End Sub
+
+    Private Sub FpSpread1_KeyUp(ByVal sender As Object, ByVal e As Windows.Forms.KeyEventArgs) Handles FpSpreadSchedule.KeyUp
+        PressedKey = ""
+    End Sub
+
+    Private Sub FpSpread1_KeyDown(ByVal sender As Object, ByVal e As Windows.Forms.KeyEventArgs) Handles FpSpreadSchedule.KeyDown
+        If e.KeyCode = 46 Then
+            ClearScheduleToolStripMenuItem_Click(Nothing, Nothing)
+        End If
+    End Sub
+
+    Public Sub Timer1_Tick(ByVal sender As Object, ByVal e As EventArgs) Handles Timer1.Tick
+        Dim I As Integer
+        Dim RetH As Integer
+        Dim RetM As Integer
+        Dim RetAM As String
+        Dim C As Integer
+        Try
+
+            With ActiveSheet
+                For I = 0 To .RowCount - 1
+                    If PassedTimeScheduleUnloacked Then
+                        For C = 2 To .ColumnCount - 1
+                            .Cells(I, C).Locked = False
+                            If .Cells(I, C).BackColor <> Color.BurlyWood And .Cells(I, C).BackColor <> Color.Khaki And .Cells(I, C).BackColor <> Color.MediumAquamarine And .Cells(I, C).BackColor <> Color.Violet Then
+                                .Cells(I, C).BackColor = Color.Empty
+                            End If
+                        Next
+                    Else
+                        RetH = CInt(Val(.GetText(I, 0)))
+                        RetM = CInt(Val(.GetText(I, 1)))
+                        'RetAM = .GetText(I, 0).Mid(4, 2)
+                        RetAM = .GetText(I, 0)
+                        If RetAM.Length > 4 Then
+                            RetAM = RetAM.Mid(4, 2)
+                        Else
+                            RetAM = "AM"
+                        End If
+                        'If DateAdd(DateInterval.Hour, 10, Now) >= CDate(DateTimePicker1.Value.Date & " " & RetH & ":" & RetM & " " & RetAM) Then
+                        If Now >= CDate(DateTimePicker1.Value.Date & " " & RetH & ":" & RetM & " " & RetAM) Then
+                            For C = 2 To .ColumnCount - 1
+                                .Cells(I, C).Locked = True
+                                If .Cells(I, C).BackColor <> Color.BurlyWood And .Cells(I, C).BackColor <> Color.Khaki And .Cells(I, C).BackColor <> Color.MediumAquamarine And .Cells(I, C).BackColor <> Color.Violet Then
+                                    .Cells(I, C).BackColor = Color.Silver
+                                End If
+                            Next
+                        End If
+
+                    End If
+                Next
+            End With
+        Catch ex As Exception
+            MsgBox(ex.Message & " RetH:" & RetH & " RetM:" & RetM & " RetAM:" & RetAM)
+            log.Error(ex.Message & " RetH:" & RetH & " RetM:" & RetM & " RetAM:" & RetAM, ex)
+        End Try
+
+        If DateTimePicker1.Value.ToShortDateString > Now.ToShortDateString Then
+            cmdDone.Enabled = False
+        End If
+    End Sub
+
+    Private Sub ContextMenuStripFindPatient_Opening(ByVal sender As Object, ByVal e As ComponentModel.CancelEventArgs) Handles ContextMenuStripFindPatient.Opening
+
+    End Sub
+
+    Private Sub FpSpreadSchedule_MouseDown(ByVal sender As Object, ByVal e As Windows.Forms.MouseEventArgs) Handles FpSpreadSchedule.MouseDown
+        Dim C As Integer
+        Dim R As Integer
+        C = FpSpreadSchedule.GetCellFromPixel(0, 0, e.X, e.Y).Column
+        R = FpSpreadSchedule.GetCellFromPixel(0, 0, e.X, e.Y).Row
+        'Dim Rp As New FarPoint.Win.Spread.EnterCellEventArgs(Nothing, R, C)
+        'FpSpread1_EnterCell(sender, Rp)
+        If C < 1 And R < 0 Then Exit Sub
+        ActiveSheet.SetActiveCell(R, C)
+        Setup_Menus()
+    End Sub
+
+    Private Sub Setup_Block_Menu()
+        If gCurrentEmployee.PositionID > 3 And gCurrentEmployee.PositionID <> 110 Then
+            ToolStripMenuItemBlock.Visible = False
+            Exit Sub
+        End If
+
+        If ActiveSheet.ActiveCell Is Nothing Then
+            ToolStripMenuItemBlock.Visible = False
+            Exit Sub
+        End If
+        If DateTimePicker1.Value.Date < DateTime.Now.ToShortDateString Then
+            ToolStripMenuItemBlock.Visible = False
+            Exit Sub
+        End If
+        Dim SIdest As ScheduleInfo = Nothing
+        SIdest = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo)
+        If IsDate(SIdest.ScheduleDateTime) = False Then
+            If SIdest.ScheduleDateTime < DateTime.Now Then
+                ToolStripMenuItemBlock.Visible = False
+                Exit Sub
+            End If
+        End If
+
+        If SIdest.ScheduleID <> 0 Then
+            ToolStripMenuItemBlock.Visible = False
+            Exit Sub
+        End If
+
+        If gCurrentEmployee.PositionID > 3 And gCurrentEmployee.PositionID <> 110 Then
+            ToolStripMenuItemBlock.Visible = False
+            Exit Sub
+        End If
+
+        If Val(SIdest.SchedulkeBlockID) <> 0 Then
+            ToolStripMenuItemBlock.Image = My.Resources.ScheduleUnlock
+            ToolStripMenuItemBlock.Text = "UnBlock Spot"
+            ToolStripMenuItemBlock.ForeColor = Color.DarkGreen
+        Else
+            ToolStripMenuItemBlock.Image = My.Resources.ScheduleLock
+            ToolStripMenuItemBlock.Text = "Block Spot"
+            ToolStripMenuItemBlock.ForeColor = Color.DarkRed
+        End If
+        ToolStripMenuItemBlock.Visible = True
+    End Sub
+
+    Public Sub Setup_Menus()
+        Dim C As Object
+        For Each C In ContextMenuStripFindPatient.Items
+            C.Visible = False
+        Next
+        cmdProcedureForm.Enabled = False
+        cmdTransport.Enabled = False
+        cmdAdd.Enabled = False
+        cmdDelete.Enabled = False
+        cmdDone.Enabled = False
+        cmdReSchedule.Enabled = False
+        cmdComments.Enabled = False
+
+        If ActiveSheet.ActiveColumnIndex < 2 Then Exit Sub
+        'If ActiveSheet.ActiveRowIndex = 0 Then Exit Sub
+        If ActiveSheet.ActiveCell Is Nothing Then Exit Sub
+        ToolStrip1.SuspendLayout()
+        Dim SI As ScheduleInfo
+
+        SI = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo)
+        If SI.CaseTypeID = 4 Then
+            CashPaymentToolStripMenuItem.Visible = True
+        End If
+
+        Setup_Block_Menu()
+
+        If ActiveSheet.ActiveCell.Text <> "" Then
+            PrintPatientsChartToolStripMenuItem.Visible = True
+            ShowPatientsInformationToolStripMenuItem.Visible = True
+            cmdComments.Enabled = True
+            CommentsToolStripMenu.Visible = True
+
+            ShowPatientInfoToolStripSeparator1.Visible = True
+            ClearScheduleToolStripMenuItem.Visible = True
+            ToolStripSeparatorEditSchedule.Visible = True
+            EditScheduleToolStripMenuItem.Visible = True
+            CancelAppointmentToolStripSeparator1.Visible = True
+            TransportationToolStripMenuItem.Visible = False
+            cmdTransport.Enabled = False
+            PrintProceduresFormToolStripMenuItem.Visible = False
+            cmdProcedureForm.Enabled = False
+
+            cmdDelete.Enabled = True
+            cmdDone.Enabled = True
+            If ActiveSheet.ActiveCell.BackColor = Color.Violet Then
+                RemoveShowUpToolStripMenuItem.Visible = True
+                ToolStripSeparatorCoupon.Visible = True
+                ToolStripMenuItemCoupon.Visible = True
+            Else
+                ToolStripSeparatorCoupon.Visible = False
+                ToolStripMenuItemCoupon.Visible = False
+                RemoveShowUpToolStripMenuItem.Visible = False
+                ToolStripSeparatorShowUp.Visible = False
+            End If
+
+            If DateDiff(DateInterval.Hour, Now, DateTimePicker1.Value) > gNoShowHours Or DateDiff(DateInterval.Hour, Now, DateTimePicker1.Value) < -gNoShowHours Or ActiveSheet.ActiveCell.BackColor = Color.Violet Then
+                ShowUpToolStripMenuItem.Visible = True
+                ConfirmedToolStripMenuItem.Visible = True
+                ToolStripSeparatorConfirmed.Visible = True
+                ToolStripSeparatorShowUp.Visible = True
+                ShowUpToolStripMenuItem.Text = "Present " & Now.ToShortTimeString
+            Else
+                ShowUpToolStripMenuItem.Visible = False
+                ConfirmedToolStripMenuItem.Visible = False
+                ToolStripSeparatorConfirmed.Visible = False
+                If ActiveSheet.ActiveCell.BackColor = Color.Violet Then
+                    RemoveShowUpToolStripMenuItem.Visible = True
+                    ToolStripSeparatorCoupon.Visible = True
+                    ToolStripMenuItemCoupon.Visible = True
+                Else
+                    ToolStripSeparatorCoupon.Visible = False
+                    ToolStripMenuItemCoupon.Visible = False
+                    RemoveShowUpToolStripMenuItem.Visible = False
+                    ToolStripSeparatorShowUp.Visible = False
+                End If
+
+            End If
+
+            If DateDiff(DateInterval.Hour, Now, DateTimePicker1.Value) < gNoShowHours Then MarkAsDoneToolStripMenuItem.Visible = True
+
+            If ActiveSheet.ActiveCell.BackColor <> Color.Violet Then
+                TransportationToolStripMenuItem.Visible = True
+            End If
+            cmdTransport.Enabled = True
+            PrintProceduresFormToolStripMenuItem.Visible = True
+            cmdProcedureForm.Enabled = True
+        Else
+            PrintPatientsChartToolStripMenuItem.Visible = False
+            If ActiveSheet.ActiveCell.Locked = False Then
+                cmdAdd.Enabled = True
+                'FindPatientToolStripMenuItem.Visible = True
+            End If
+            Exit Sub
+        End If
+        ToolStripSeparatorEditSchedule.Visible = True
+        EditScheduleToolStripMenuItem.Visible = True
+        If ActiveSheet.ActiveCell.Locked Or ActiveSheet.ActiveCell.BackColor = Color.MediumAquamarine Then
+            FindPatientToolStripMenuItem.Visible = False
+            TransportationToolStripMenuItem.Visible = False
+            cmdTransport.Enabled = False
+            PrintProceduresFormToolStripMenuItem.Visible = False
+            cmdProcedureForm.Enabled = False
+
+            If ActiveSheet.ActiveCell.BackColor = Color.MediumAquamarine Then
+                ToolStripSeparatorEditSchedule.Visible = False
+                EditScheduleToolStripMenuItem.Visible = False
+            End If
+            cmdAdd.Enabled = False
+            cmdDelete.Enabled = False
+            cmdDone.Enabled = False
+        End If
+        If ActiveSheet.ActiveCell.BackColor = Color.MediumAquamarine Then
+            ClearScheduleToolStripMenuItem.Visible = False
+            CancelAppointmentToolStripSeparator1.Visible = False
+        End If
+        If ActiveSheet.ActiveCell.Text <> "" And ActiveSheet.ActiveCell.BackColor = Color.MediumAquamarine Then
+            SetAsUnDoneToolStripMenuItem.Visible = True
+        Else
+            SetAsUnDoneToolStripMenuItem.Visible = False
+        End If
+
+        If ActiveSheet.ActiveCell.Text <> "" And ActiveSheet.ActiveCell.BackColor <> Color.MediumAquamarine Then
+            cmdReSchedule.Enabled = True
+            ReScheduleToolStripMenuItem.Visible = True
+            ToolStripSeparatorReSchedule.Visible = True
+            If DateDiff(DateInterval.Hour, Now, DateTimePicker1.Value) > gNoShowHours Or DateDiff(DateInterval.Hour, Now, DateTimePicker1.Value) < -gNoShowHours Or ActiveSheet.ActiveCell.BackColor = Color.Violet Then
+                ShowUpToolStripMenuItem.Visible = False
+                ConfirmedToolStripMenuItem.Visible = True
+                ToolStripSeparatorConfirmed.Visible = True
+                ToolStripSeparatorShowUp.Visible = False
+            Else
+                ShowUpToolStripMenuItem.Visible = True
+                ConfirmedToolStripMenuItem.Visible = True
+                ToolStripSeparatorConfirmed.Visible = True
+                ShowUpToolStripMenuItem.Text = "Present " & Now.ToShortTimeString
+                ToolStripSeparatorShowUp.Visible = True
+            End If
+            If DateDiff(DateInterval.Hour, Now, DateTimePicker1.Value) < gNoShowHours Then MarkAsDoneToolStripMenuItem.Visible = True
+            cmdDone.Enabled = True
+        Else
+            If DateDiff(DateInterval.Hour, Now, DateTimePicker1.Value) < gNoShowHours Then MarkAsDoneToolStripMenuItem.Visible = False
+            ShowUpToolStripMenuItem.Visible = False
+            ConfirmedToolStripMenuItem.Visible = False
+            ToolStripSeparatorConfirmed.Visible = False
+            cmdDone.Enabled = False
+        End If
+        If ActiveSheet.ActiveCell.BackColor = Color.BurlyWood Or ActiveSheet.ActiveCell.BackColor = Color.Violet Then
+            ConfirmedToolStripMenuItem.Visible = False
+            ToolStripSeparatorConfirmed.Visible = False
+        End If
+        mnuScheduledProceduresLabel.Visible = False
+        mnuSeparatorPrintProcedureLabel.Visible = False
+
+        mnuScheduledProceduresLabel.Visible = (gOfficeTypeID = 1 Or gOfficeTypeID = 3)
+        mnuSeparatorPrintProcedureLabel.Visible = (gOfficeTypeID = 1 Or gOfficeTypeID = 3)
+
+        Application.DoEvents()
+        ToolStrip1.ResumeLayout()
+        If DateTimePicker1.Value.ToShortDateString > Now.ToShortDateString Then
+            cmdDone.Enabled = False
+        End If
+    End Sub
+
+    Private Sub MarkAsDoneToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles MarkAsDoneToolStripMenuItem.Click
+        Dim PatientID As Long
+
+        If ActiveSheet.ActiveCell.Text <> "" Then
+            FpSpreadSchedule.EditMode = False
+            frmScheduleComplete.Load_Procedures(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).ScheduleID)
+            PatientID = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID
+            Dim SaveRow As Integer = ActiveSheet.ActiveRowIndex
+            Dim SaveCol As Integer = ActiveSheet.ActiveColumnIndex
+            frmScheduleComplete.MinimizeBox = False
+            frmScheduleComplete.MaximizeBox = False
+            If frmScheduleComplete.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+                Load_Schedule()
+                Timer1_Tick(Nothing, Nothing)
+                ActiveSheet.SetActiveCell(SaveRow, SaveCol)
+                LockWindowUpdate(Panel3.Handle)
+                Show_Details(PatientID)
+                LockWindowUpdate(0)
+            End If
+            frmScheduleComplete.Dispose()
+            gUpdate_Profile_Log(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID, PatientLogTypes.tServiceComplete, "Schedule Complete: " & Now)
+            'If MsgBox("Please confirm the appointment for the " & ActiveSheet.ActiveCell.Text & " at " & RetH.ToString("00") & ":" & RetM.ToString("00") & " " & RetAM & "  is complete?", MsgBoxStyle.Question Or MsgBoxStyle.YesNo) = MsgBoxResult.No Then Exit Sub
+            'ActiveSheet.ActiveCell.BackColor = Color.MediumAquamarine
+            'gSQLUpdateData("UPDATE Schedule set UpdatedByEmpID=" & gCurrentEmployee.ID.ToString & ", UpdatedDT=getdate(), ScheduleStatusID =2 Where  ScheduleID=" & CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).ScheduleID)
+            'gUpdate_Profile_Log(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID, PatientLogTypes.tScheduleCompleted)
+            'Show_Details(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID)
+            Calculate_Totals()
+        End If
+
+    End Sub
+
+    Private Sub FpSpreadSchedule_CellClick(ByVal sender As Object, ByVal e As FarPoint.Win.Spread.CellClickEventArgs) Handles FpSpreadSchedule.CellClick
+        Dim Rp As New FarPoint.Win.Spread.EnterCellEventArgs(e.View, e.Row, e.Column)
+        FpSpread1_EnterCell(sender, Rp)
+    End Sub
+
+    Private Sub TransportationToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles TransportationToolStripMenuItem.Click
+        Dim CT As New FarPoint.Win.Spread.CellType.TextCellType
+        Dim SI As ScheduleInfo
+        frmRequireTransportation.CalledForm = Me
+        frmRequireTransportation.ComboBoxPickup.SelectedIndex = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PickupTransportation
+        If frmRequireTransportation.ComboBoxPickup.SelectedIndex = 3 Then
+            frmRequireTransportation.txtPickupOther.Text = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PickupTransportationOther
+        Else
+            frmRequireTransportation.txtPickupOther.Text = ""
+        End If
+        frmRequireTransportation.ComboBoxDestination.SelectedIndex = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).DestinationTransportation
+        If frmRequireTransportation.ComboBoxDestination.SelectedIndex = 3 Then
+            frmRequireTransportation.txtDestinationOther.Text = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).DestinationTransportationOther
+        Else
+            frmRequireTransportation.txtDestinationOther.Text = ""
+        End If
+
+        If frmRequireTransportation.ShowDialog() <> Windows.Forms.DialogResult.OK Then
+            frmRequireTransportation.Dispose()
+            Exit Sub
+        End If
+        frmRequireTransportation.Dispose()
+        If ReturnSchPickupTransportation > 0 Or ReturnSchDestinationTransportation > 0 Then
+            SI = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo)
+            SI.PickupTransportation = ReturnSchPickupTransportation
+            If ReturnSchPickupTransportation = 3 Then
+                SI.PickupTransportationOther = ReturnSchPickupTransportationOther
+            Else
+                SI.PickupTransportationOther = ""
+            End If
+
+            SI.DestinationTransportation = ReturnSchDestinationTransportation
+            If ReturnSchDestinationTransportation = 3 Then
+                SI.DestinationTransportationOther = ReturnSchDestinationTransportationOther
+            Else
+                SI.DestinationTransportationOther = ""
+            End If
+
+            CT.BackgroundImage = New FarPoint.Win.Picture(PictureBoxTransportation.Image)
+            CT.BackgroundImage.AlignHorz = FarPoint.Win.HorizontalAlignment.Right
+            CT.BackgroundImage.AlignVert = FarPoint.Win.VerticalAlignment.Center
+            ActiveSheet.ActiveCell.CellType = CT
+            ActiveSheet.ActiveCell.Tag = SI
+            gSQLUpdateData("UPDATE Schedule set UpdatedByEmpID=" & gCurrentEmployee.EmpID.ToString & ", UpdatedDT=getdate(), PickupTransportation=" & ReturnSchPickupTransportation & ", DestinationTransportation=" & ReturnSchDestinationTransportation & ", PickupTransportationOther='" & ReturnSchPickupTransportationOther.ToSafeSQLString() & "', DestinationTransportationOther='" & ReturnSchDestinationTransportationOther.ToSafeSQLString() & "' Where  ScheduleID=" & CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).ScheduleID)
+            gUpdate_Profile_Log(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID, PatientLogTypes.tTransportationCanceled)
+        Else
+            SI = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo)
+            SI.PickupTransportation = ReturnSchPickupTransportation
+            If SI.PickupTransportation = 3 Then
+                SI.PickupTransportationOther = ReturnSchPickupTransportationOther
+            End If
+
+            SI.DestinationTransportation = ReturnSchDestinationTransportation
+            If SI.DestinationTransportation = 3 Then
+                SI.DestinationTransportationOther = ReturnSchDestinationTransportationOther
+            End If
+
+            ActiveSheet.ActiveCell.CellType = CT
+            ActiveSheet.ActiveCell.Tag = SI
+            gSQLUpdateData("UPDATE Schedule set UpdatedByEmpID=" & gCurrentEmployee.EmpID.ToString & ", UpdatedDT=getdate(), PickupTransportation=" & ReturnSchPickupTransportation & ", DestinationTransportation='" & ReturnSchDestinationTransportation & "', PickupTransportationOther='" & ReturnSchPickupTransportationOther.ToSafeSQLString() & "', DestinationTransportationOther='" & ReturnSchDestinationTransportationOther & "' Where ScheduleID=" & CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).ScheduleID)
+            gUpdate_Profile_Log(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID, PatientLogTypes.tTransportationRequested)
+        End If
+        gUpdate_Profile_Log(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID, PatientLogTypes.tScheduleTransportationChanged, "Transportation Requirements Changed")
+    End Sub
+
+    Private Sub SetAsUnDoneToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles SetAsUnDoneToolStripMenuItem.Click
+        Dim PatientID As Long
+        Dim ApprovedByID As Long
+        Dim ApprovedByName As String
+        If gCurrentEmployee.PositionID > 3 Then
+            frmSupervisorApproval.LabelMsg.Text = "Undone Procedure."
+            If frmSupervisorApproval.ShowDialog <> Windows.Forms.DialogResult.OK Then
+                frmSupervisorApproval.Dispose()
+                Exit Sub
+            End If
+            ApprovedByID = frmSupervisorApproval.SupervisorID
+            ApprovedByName = frmSupervisorApproval.SupervisorName
+            frmSupervisorApproval.Dispose()
+        Else
+            If MsgBox("Undone Procedure." & vbCrLf & vbCrLf & "Please confirm?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = vbNo Then
+                Exit Sub
+            End If
+            ApprovedByName = gCurrentEmployee.FName & " " & gCurrentEmployee.LName
+        End If
+        gUpdate_Profile_Log(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID, PatientLogTypes.tScheduleNotCompleted, "Procedure marked done by mistake", ApprovedByName)
+
+        If ActiveSheet.ActiveCell.Text <> "" Then
+            FpSpreadSchedule.EditMode = False
+            frmScheduleUndone.Load_Procedures(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).ScheduleID)
+            PatientID = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID
+            Dim SaveRow As Integer = ActiveSheet.ActiveRowIndex
+            Dim SaveCol As Integer = ActiveSheet.ActiveColumnIndex
+            frmScheduleUndone.MinimizeBox = False
+            frmScheduleUndone.MaximizeBox = False
+            If frmScheduleUndone.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+                Load_Schedule()
+                Timer1_Tick(Nothing, Nothing)
+                ActiveSheet.SetActiveCell(SaveRow, SaveCol)
+                LockWindowUpdate(Panel3.Handle)
+                Show_Details(PatientID)
+                LockWindowUpdate(0)
+            End If
+            frmScheduleUndone.Dispose()
+            Calculate_Totals()
+        End If
+    End Sub
+
+    Private Sub ShowPatientsInformationToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ShowPatientsInformationToolStripMenuItem.Click
+
+        Try
+            Using NewFrm As New frmPatient
+                Dim PatientID As Integer = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID
+                NewFrm.InitialTab = 0
+                NewFrm.InitialPatientName = PatientID
+                NewFrm.Width = 1225
+                NewFrm.WindowState = FormWindowState.Normal
+                NewFrm.Location = New Point(Me.Left + ((Width - frmPatient.Size.Width) \ 2), Me.Top + ((Height - frmPatient.Size.Height) \ 2))
+                NewFrm.MinimizeBox = False
+                NewFrm.MaximizeBox = False
+                NewFrm.ShowDialog(Me)
+            End Using
+        Catch ex As Exception
+            log.Error(ex)
+        End Try
+        Cursor = Cursors.Default
+
+    End Sub
+
+    Private Sub PrintProceduresFormToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles PrintProceduresFormToolStripMenuItem.Click
+        Dim ID As Long
+        Dim CL As FarPoint.Win.Spread.Cell = ActiveSheet.ActiveCell
+
+        FpSpreadSchedule.Focus()
+        If CL Is Nothing Then Exit Sub
+        ID = Val(CType(CL.Tag, ScheduleInfo).PatientID)
+        If ID = 0 Then Exit Sub
+        frmReportPatientVisitsTodayProceduresOnePatient.Setup_report(ID, DateTimePicker1.Value.ToString("MM/dd/yyyy"))
+        frmReportPatientVisitsTodayProceduresOnePatient.MinimizeBox = False
+        frmReportPatientVisitsTodayProceduresOnePatient.MaximizeBox = False
+
+        frmReportPatientVisitsTodayProceduresOnePatient.ShowDialog(Me)
+        frmReportPatientVisitsTodayProceduresOnePatient.Dispose()
+    End Sub
+
+    Private Sub Button2_Click_1(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripButtonToday.Click
+
+    End Sub
+
+    Private Sub FpSpreadSchedule_TextTipFetch(ByVal sender As Object, ByVal e As FarPoint.Win.Spread.TextTipFetchEventArgs) Handles FpSpreadSchedule.TextTipFetch
+        Dim Ret As String
+        'If e.Row = 0 Then e.ShowTip = False : Exit Sub
+        If e.Column < 2 Then e.ShowTip = False : Exit Sub
+        'If ActiveSheet.Cells(e.Row, e.Column).Text = "" Then e.ShowTip = False : Exit Sub
+        Ret = CType(ActiveSheet.Cells(e.Row, e.Column).Tag, ScheduleInfo).ToolTip
+        If IsDate(CType(ActiveSheet.Cells(e.Row, e.Column).Tag, ScheduleInfo).ShowUpDateTime) And CType(ActiveSheet.Cells(e.Row, e.Column).Tag, ScheduleInfo).ShowUpDateTime <> "#12:00:00 AM#" Then
+            If CDate(CType(ActiveSheet.Cells(e.Row, e.Column).Tag, ScheduleInfo).ShowUpDateTime).Hour > 0 Then
+                Ret = "Present: " & CType(ActiveSheet.Cells(e.Row, e.Column).Tag, ScheduleInfo).ShowUpDateTime & vbCrLf & vbCrLf & Ret
+            End If
+        Else
+            If CType(ActiveSheet.Cells(e.Row, e.Column).Tag, ScheduleInfo).ConfirmedBy <> "" Then
+                Ret = Ret & vbCrLf & vbCrLf & CType(ActiveSheet.Cells(e.Row, e.Column).Tag, ScheduleInfo).ConfirmedBy
+            End If
+        End If
+        If Ret <> "" Then
+            e.TipText = Ret
+            e.WrapText = False
+            e.ShowTip = True
+        Else
+            e.TipText = ActiveSheet.Cells(e.Row, e.Column).Text
+            e.ShowTip = True
+        End If
+    End Sub
+
+    Private Sub EditScheduleToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles EditScheduleToolStripMenuItem.Click
+        If CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).CaseTypeID = 4 And ActiveSheet.ActiveCell.BackColor = Color.Violet Then
+            MsgBox("Unable to make changes to the Cash Schedule which is set as Present." & vbCrLf & "You can cancel appointment and recteate it again.", MsgBoxStyle.Information)
+            Exit Sub
+        End If
+        If ActiveSheet.ActiveCell.BackColor = Color.MediumAquamarine Then
+            MsgBox("Unable to edit complete appointment.", MsgBoxStyle.Exclamation)
+            FpSpreadSchedule.EditMode = False
+            Exit Sub
+        End If
+        'If ActiveSheet.ActiveCell.Locked Then
+        '    FpSpreadSchedule.EditMode = False
+        '    Exit Sub
+        'End If
+        Dim SI As ScheduleInfo
+        SI = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo)
+        frmScheduleSearchPopup.CalledForm = Me
+        frmScheduleSearchPopup.SchID = SI.ScheduleID
+        frmScheduleSearchPopup.SchDiagID = CLng(ActiveSheet.ColumnHeader.Columns(ActiveSheet.ActiveColumn.Index).Tag)
+        frmScheduleSearchPopup.SchDiagName = ActiveSheet.ActiveColumn.Label
+        frmScheduleSearchPopup.SchActiveCell = ActiveSheet.ActiveCell
+        frmScheduleSearchPopup.SchH = CInt(Val(ActiveSheet.Cells(ActiveSheet.ActiveCell.Row.Index, 0).Text))
+        frmScheduleSearchPopup.SchM = CInt(Val(ActiveSheet.Cells(ActiveSheet.ActiveCell.Row.Index, 1).Text))
+        If frmScheduleSearchPopup.SchAM = ActiveSheet.Cells(ActiveSheet.ActiveCell.Row.Index, 0).Text.Length > 4 Then
+            frmScheduleSearchPopup.SchAM = ActiveSheet.Cells(ActiveSheet.ActiveCell.Row.Index, 0).Text.Mid(4, 2)
+        Else
+            frmScheduleSearchPopup.SchAM = "AM"
+        End If
+        frmScheduleSearchPopup.SchDate = DateTimePicker1.Value.Date
+        frmScheduleSearchPopup.ReturnSchPickupTransportation = SI.PickupTransportation
+        frmScheduleSearchPopup.ReturnSchDestinationTransportation = SI.DestinationTransportation
+
+        frmScheduleSearchPopup.Find_Patient(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID)
+        FpSpreadSchedule.EditMode = False
+        ReturnSchName = ""
+        ReturnScheduleID = 0
+        ReturnSchPickupTransportation = 0
+        ReturnSchDestinationTransportation = 0
+        Dim SaveRow As Integer = ActiveSheet.ActiveRowIndex
+        Dim SaveCol As Integer = ActiveSheet.ActiveColumnIndex
+        'Dim SI As ScheduleInfo
+        frmScheduleSearchPopup.MinimizeBox = False
+        frmScheduleSearchPopup.MaximizeBox = False
+
+        If frmScheduleSearchPopup.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+            gLockWindowUpdate(Me.Handle, False)
+            Load_Schedule()
+            Timer1_Tick(Nothing, Nothing)
+            ActiveSheet.SetActiveCell(SaveRow, SaveCol)
+            Show_Details(ReturnUserID)
+            gLockWindowUpdate(Me.Handle, True)
+        Else
+            If ActiveSheet.ActiveCell.Text.Length = 1 Then
+                ActiveSheet.ActiveCell.Text = ""
+            End If
+        End If
+        PressedKey = ""
+        Setup_Menus()
+        Calculate_Totals()
+    End Sub
+
+    Private Sub cmdAdd_Click(ByVal sender As Object, ByVal e As EventArgs) Handles cmdAdd.Click
+        FindPatientToolStripMenuItem_Click(Nothing, Nothing)
+    End Sub
+
+    Private Sub cmdDone_Click_1(ByVal sender As Object, ByVal e As EventArgs) Handles cmdDone.Click
+        If DateTimePicker1.Value.ToShortDateString > Now.ToShortDateString Then
+            MsgBox("Unable to mark future appointment as complete.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        Dim CL As FarPoint.Win.Spread.Cell = ActiveSheet.ActiveCell
+        If CL Is Nothing Then Exit Sub
+        'If CL.Locked Then Exit Sub
+        MarkAsDoneToolStripMenuItem_Click(Nothing, Nothing)
+    End Sub
+
+    Private Sub cmdTransport_Click(ByVal sender As Object, ByVal e As EventArgs) Handles cmdTransport.Click
+        TransportationToolStripMenuItem_Click(Nothing, Nothing)
+    End Sub
+
+    Private Sub cmdProcedureForm_Click(ByVal sender As Object, ByVal e As EventArgs) Handles cmdProcedureForm.Click
+        PrintProceduresFormToolStripMenuItem_Click(Nothing, Nothing)
+    End Sub
+
+    Private Sub cmdDelete_Click_1(ByVal sender As Object, ByVal e As EventArgs) Handles cmdDelete.Click
+        ClearScheduleToolStripMenuItem_Click(Nothing, Nothing)
+    End Sub
+
+    Private Sub Button1_Click(ByVal sender As Object, ByVal e As EventArgs) Handles Button1.Click
+        MnuPrint.Show(Button1, 0, 0)
+    End Sub
+
+    Private Sub PrintSchedule(ByVal FullSchedule As Boolean)
+        Dim Printinfo As New FarPoint.Win.Spread.PrintInfo
+        Dim Transportation As String
+        Cursor = Cursors.WaitCursor
+        Application.DoEvents()
+        Dim R As Integer = 0
+        Dim C As Integer = 0
+        Dim SI As ScheduleInfo
+        FpSpreadRpt.ActiveSheet.ColumnCount = 1
+        FpSpreadRpt.ActiveSheet.RowCount = 0
+        FpSpreadRpt.ActiveSheet.ColumnCount = ActiveSheet.ColumnCount - 1
+        For C = 2 To ActiveSheet.ColumnCount - 1
+            FpSpreadRpt.ActiveSheet.SetColumnLabel(0, C - 1, ActiveSheet.GetColumnLabel(0, C))
+            FpSpreadRpt.ActiveSheet.SetColumnWidth(C - 1, ActiveSheet.GetColumnWidth(C))
+        Next
+        Dim DataFound As Boolean
+        For R = 0 To ActiveSheet.RowCount - 1
+            DataFound = False
+            For C = 2 To ActiveSheet.ColumnCount - 1
+                If ActiveSheet.Cells(R, C).Text <> "" Or FullSchedule = True Then
+                    FpSpreadRpt.ActiveSheet.RowCount = FpSpreadRpt.ActiveSheet.RowCount + 1
+                    DataFound = True
+                    Exit For
+                End If
+            Next
+            If DataFound = False Then
+                GoTo NextRow
+            End If
+            For C = 2 To ActiveSheet.ColumnCount - 1
+                Transportation = ""
+                If ActiveSheet.Cells(R, C).Text <> "" Or FullSchedule = True Then
+                    SI = CType(ActiveSheet.Cells(R, C).Tag, ScheduleInfo)
+                    If ActiveSheet.Cells(R, C).Text = "" Then
+                        FpSpreadRpt.ActiveSheet.Cells(FpSpreadRpt.ActiveSheet.RowCount - 1, 0).Text =
+                            ActiveSheet.Cells(R, 0).Text.ToUpper().Left(ActiveSheet.Cells(R, 0).Text.Length - 3) & ":" & ActiveSheet.Cells(R, 1).Text.ToUpper() & " " & ActiveSheet.Cells(R, 0).Text.Right(2).ToUpper()
+                        FpSpreadRpt.ActiveSheet.Cells(FpSpreadRpt.ActiveSheet.RowCount - 1, C - 1).Text = ""
+                    Else
+                        FpSpreadRpt.ActiveSheet.Cells(FpSpreadRpt.ActiveSheet.RowCount - 1, 0).Text = CDate(SI.ScheduleDateTime).ToString("hh:mm tt")
+                        If SI.PickupTransportation = 1 Then
+                            Transportation = vbCrLf & "Pickup Home"
+                        ElseIf SI.PickupTransportation = 2 Then
+                            Transportation = vbCrLf & "Pickup Ref Office"
+                        End If
+                        If SI.DestinationTransportation = 1 Then
+                            Transportation = Transportation & vbCrLf & "DropOff Home"
+                        ElseIf SI.PickupTransportation = 2 Then
+                            Transportation = Transportation & vbCrLf & "DropOff Ref Office"
+                        End If
+                        FpSpreadRpt.ActiveSheet.Cells(FpSpreadRpt.ActiveSheet.RowCount - 1, C - 1).Text = ActiveSheet.Cells(R, C).Text & vbCrLf & SI.PatientPhone & Transportation
+                    End If
+                End If
+            Next
+NextRow:
+        Next
+        For C = 0 To FpSpreadRpt.ActiveSheet.ColumnCount - 1
+            FpSpreadRpt.ActiveSheet.SetColumnWidth(C, FpSpreadRpt.ActiveSheet.GetPreferredColumnWidth(C) + 20)
+        Next
+        Application.DoEvents()
+        FpSpreadRpt.Refresh()
+        Printinfo.SmartPrintPagesWide = 1
+        Printinfo.Header = "SCHEDULE FOR THE " & DateTimePicker1.Text.ToUpper & vbCrLf
+        Printinfo.BestFitRows = True
+        Printinfo.BestFitCols = False
+        Printinfo.Preview = True
+        Printinfo.ShowShadows = False
+        Printinfo.JobName = "eMedical Office Schedule"
+        Printinfo.PrintType = FarPoint.Win.Spread.PrintType.All
+        Printinfo.ShowColor = True
+        Printinfo.ShowColumnHeader = FarPoint.Win.Spread.PrintHeader.Show
+        Printinfo.ShowBorder = False
+        Printinfo.ShowGrid = True
+        Printinfo.ShowPrintDialog = True
+        Printinfo.ShowRowHeader = FarPoint.Win.Spread.PrintHeader.Show
+        Printinfo.Orientation = FarPoint.Win.Spread.PrintOrientation.Portrait
+        Printinfo.SmartPrintRules.Add(New FarPoint.Win.Spread.LandscapeRule(FarPoint.Win.Spread.ResetOption.None))
+        Printinfo.SmartPrintRules.Add(New FarPoint.Win.Spread.BestFitColumnRule(FarPoint.Win.Spread.ResetOption.None))
+        Printinfo.UseSmartPrint = False
+        Printinfo.UseMax = False
+
+        FpSpreadRpt.ActiveSheet.PrintInfo = Printinfo
+        FpSpreadRpt.PrintSheet(FpSpreadRpt_Sheet1)
+        Cursor = Cursors.Default
+    End Sub
+
+    Private Sub ShowUpToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ShowUpToolStripMenuItem.Click
+        Dim SI As ScheduleInfo
+        Dim sSI As ScheduleInfo
+        Dim C As FarPoint.Win.Spread.Cell
+        Dim sC As FarPoint.Win.Spread.Cell
+        Dim ScheduleID As Long
+        Dim SQL As String
+        Dim I As Integer
+        Dim Col As Integer
+        Dim PaidAmount As Decimal = 0
+        Dim BilledAmount As Decimal = 0
+        C = ActiveSheet.ActiveCell
+        SI = CType(C.Tag, ScheduleInfo)
+        ScheduleID = SI.ScheduleID
+        BilledAmount = gSQLGetSingleValue("SELECT     BillAmount FROM Bills WHERE Bills.ScheduleID = " & ScheduleID)
+        PaidAmount = gSQLGetSingleValue("SELECT     sum(BillPayments.PaymentAmount) as PaidAmount FROM Bills INNER JOIN BillPayments ON Bills.BillID = BillPayments.BillID WHERE Bills.ScheduleID = " & ScheduleID)
+
+        If SI.CaseTypeID = 4 And (BilledAmount = 0 Or (PaidAmount < BilledAmount)) Then
+
+            frmCashPayment.ScheduleID = ScheduleID
+            frmCashPayment.MinimizeBox = False
+            frmCashPayment.MaximizeBox = False
+
+            If frmCashPayment.ShowDialog(Me) <> Windows.Forms.DialogResult.OK Then
+                MsgBox("Procedure can not be accomplished." & vbCrLf & "Payment Required." & vbCrLf & vbCrLf & vbCrLf & "If payment amount not been collected, please cancel this appointment.", MsgBoxStyle.Exclamation)
+                Exit Sub
+            End If
+            SI.ProcedurePaid = 1
+            SI.ShowUpDateTime = Now
+            C.Tag = SI
+            C.BackColor = Color.Violet
+            SQL = "Update Schedule set ShowUpDatetime = getdate() where ScheduleID  = " & SI.ScheduleID
+            gSQLUpdateData(SQL)
+        Else
+            If MsgBox("Please confirm the patient " & C.Text & " is waiting...", MsgBoxStyle.Question + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                Exit Sub
+            End If
+        End If
+
+        For I = 0 To ActiveSheet.RowCount - 1
+            For Col = 2 To ActiveSheet.ColumnCount - 1
+                sC = ActiveSheet.Cells(I, Col)
+                sSI = CType(sC.Tag, ScheduleInfo)
+                If sSI.PatientID = SI.PatientID Then
+                    sSI.ShowUpDateTime = Now
+                    sC.Tag = sSI
+                    sC.BackColor = Color.Violet
+                    SQL = "Update Schedule set ShowUpDatetime = getdate() where ScheduleID  = " & sSI.ScheduleID
+                    gSQLUpdateData(SQL)
+                End If
+            Next
+        Next
+        mnuScheduledProceduresLabel_Click(Nothing, Nothing)
+        'Print_Chart()
+        Calculate_Totals()
+        gUpdate_Profile_Log(SI.PatientID, PatientLogTypes.tSchedulePresent, "Schedule: " & SI.ScheduleDateTime & " Patient Present: " & Now)
+    End Sub
+
+    Public Sub ToolStripButtonRefresh_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripButton1.Click
+        Dim C As FarPoint.Win.Spread.Cell
+        Cursor = Cursors.WaitCursor
+        Application.DoEvents()
+        LockWindowUpdate(Me.Handle)
+        C = ActiveSheet.ActiveCell
+        Application.DoEvents()
+        Load_Schedule()
+
+        Timer1_Tick(Nothing, Nothing)
+        If Not C Is Nothing Then
+            ActiveSheet.SetActiveCell(C.Row.Index, C.Column.Index)
+        End If
+        LockWindowUpdate(0)
+        Cursor = Cursors.Default
+    End Sub
+
+    Private Sub TimerRefresh_Tick(ByVal sender As Object, ByVal e As EventArgs) Handles TimerRefresh.Tick
+        If gIdleTimeCurrent > 20 Then
+            ToolStripButtonRefresh_Click(Nothing, Nothing)
+        End If
+    End Sub
+
+    Private Sub ToolStripButton2_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripButton2.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, -1, DateTimePicker1.Value)
+    End Sub
+
+    Private Sub ToolStripButton3_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripButton3.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 1, DateTimePicker1.Value)
+    End Sub
+
+    Private Sub RemoveShowUpToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles RemoveShowUpToolStripMenuItem.Click
+        Dim SI As ScheduleInfo
+        Dim sSI As ScheduleInfo
+        Dim C As FarPoint.Win.Spread.Cell
+        Dim sC As FarPoint.Win.Spread.Cell
+        Dim ScheduleID As Long
+        Dim SQL As String
+        Dim ApprovedByID As Long
+        Dim ApprovedByName As String
+        Dim Col As Integer
+        Dim I As Integer
+        If ActiveSheet.ActiveCell.BackColor <> Color.Violet Then
+            Exit Sub
+        End If
+        C = ActiveSheet.ActiveCell
+        SI = CType(C.Tag, ScheduleInfo)
+        ScheduleID = SI.ScheduleID
+
+        If gCurrentEmployee.PositionID > 3 Then
+            frmSupervisorApproval.LabelMsg.Text = "Patient " & C.Text & " left or was set as Present by mistake."
+            If frmSupervisorApproval.ShowDialog <> Windows.Forms.DialogResult.OK Then
+                frmSupervisorApproval.Dispose()
+                Exit Sub
+            End If
+            ApprovedByID = frmSupervisorApproval.SupervisorID
+            ApprovedByName = frmSupervisorApproval.SupervisorName
+            frmSupervisorApproval.Dispose()
+        Else
+            If MsgBox("Patient " & C.Text & " left or was set as Present by mistake." & vbCrLf & vbCrLf & "Please confirm?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = vbNo Then
+                Exit Sub
+            End If
+            ApprovedByName = gCurrentEmployee.FName & " " & gCurrentEmployee.LName
+        End If
+        gUpdate_Profile_Log(CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID, PatientLogTypes.tProcedureUndone, "Patient left or was set as Present by mistake", ApprovedByName)
+        Dim D As DateTime
+
+        For I = 0 To ActiveSheet.RowCount - 1
+            For Col = 2 To ActiveSheet.ColumnCount - 1
+                sC = ActiveSheet.Cells(I, Col)
+                sSI = CType(sC.Tag, ScheduleInfo)
+                If sSI.PatientID = SI.PatientID Then
+                    sSI.ShowUpDateTime = "#12:00:00 AM#"
+                    sC.Tag = sSI
+                    sC.BackColor = Color.Khaki
+                    SQL = "Update Schedule set ShowUpDatetime = Null where ScheduleID  = " & sSI.ScheduleID
+                    gSQLUpdateData(SQL)
+                End If
+            Next
+        Next
+        Calculate_Totals()
+        gUpdate_Profile_Log(sSI.PatientID, PatientLogTypes.tScheduleNotPresent, "Patient Left / Not Present: " & Now)
+    End Sub
+
+    Private Sub ConfirmedToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ConfirmedToolStripMenuItem.Click
+        Dim SI As ScheduleInfo
+        Dim C As FarPoint.Win.Spread.Cell
+        Dim ScheduleID As Long
+        Dim SQL As String
+
+        C = ActiveSheet.ActiveCell
+        SI = CType(C.Tag, ScheduleInfo)
+        ScheduleID = SI.ScheduleID
+        If gOfficeTypeID = 1 Then
+            If MsgBox(ActiveSheet.ActiveCell.Text & vbCrLf & vbCrLf & "Appointment Confirmed?", MsgBoxStyle.Question + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                Exit Sub
+            End If
+        Else
+            If IsDate(SI.PreCertificationDT) = False Then
+                If MsgBox(ActiveSheet.ActiveCell.Text & vbCrLf & vbCrLf & "ATTENTION!" & vbCrLf & vbCrLf & "The Insurance Pre-Sertification has NOT been verified!" & vbCrLf & vbCrLf & "Contact the Insurance company!", MsgBoxStyle.Critical + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                    Exit Sub
+                End If
+            Else
+                If MsgBox(ActiveSheet.ActiveCell.Text & vbCrLf & vbCrLf & "Appointment Confirmed?", MsgBoxStyle.Question + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                    Exit Sub
+                End If
+            End If
+        End If
+        SI.ConfirmedBy = "Appointment Confirmed at " & FormatDateTime(Now, DateFormat.ShortDate) & " " & FormatDateTime(Now, DateFormat.ShortTime) & " by " & gCurrentEmployee.FName & " " & gCurrentEmployee.LName
+        C.Tag = SI
+        C.BackColor = Color.BurlyWood
+        SQL = "Update Schedule set ConfirmedBy = '" & SI.ConfirmedBy.ToSafeSQLString() & "' where ScheduleID  = " & SI.ScheduleID
+        gSQLUpdateData(SQL)
+        gUpdate_Profile_Log(SI.PatientID, PatientLogTypes.tScheduleConfirmed, "Schedule: " & SI.ScheduleDateTime & " Confirmed At: " & Now)
+        Calculate_Totals()
+    End Sub
+
+    Private Sub ToolStripButtonReSchedule_Click(ByVal sender As Object, ByVal e As EventArgs) Handles cmdReSchedule.Click
+        Dim CL As FarPoint.Win.Spread.Cell = ActiveSheet.ActiveCell
+        If CL.Column.Index < 2 Then
+            Exit Sub
+        End If
+        If CL Is Nothing Then
+            MsgBox("Unable to move schedule." & vbCrLf & "No schedule selected.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        If CL.Text = "" Then
+            MsgBox("Unable to move schedule." & vbCrLf & "Selected schedule is empty.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        If CL.BackColor = Color.MediumAquamarine Then
+            MsgBox("Unable to move complete schedule.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        Dim NotComplettedProcs As Integer
+        NotComplettedProcs = gSQLGetSingleValue("select count(*) from PatientProcedures WHERE ProcedureStatusID<>2 and ProcedureStatusID<>3  AND PatientProcedures.ScheduleID = " & CType(CL.Tag, ScheduleInfo).ScheduleID)
+        If NotComplettedProcs = 0 Then
+            MsgBox("Unable to move schedule." & vbCrLf & "All procedures in this scheduled appointment are completted.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        If Val(FpSpreadDetails_Sheet1.Cells(0, 0).Tag) = 1 Then
+            MsgBox("Unable to reschedule this appointments." & vbCrLf & vbCrLf & "No More Appointements!", MsgBoxStyle.Exclamation)
+            Exit Sub
+        ElseIf Val(FpSpreadDetails_Sheet1.Cells(0, 0).Tag) = 2 Then
+            If gCurrentEmployee.PositionID > 3 Then
+                frmSupervisorApproval.LabelMsg.Text = "This patient has too many" & vbCrLf & "Cancelations / Reschedules!"
+                If frmSupervisorApproval.ShowDialog <> Windows.Forms.DialogResult.OK Then
+                    frmSupervisorApproval.Dispose()
+                    Exit Sub
+                End If
+                frmSupervisorApproval.Dispose()
+            Else
+                If MsgBox("This Patient has too many Cancelations / Reschedules!" & vbCrLf & vbCrLf & "Continue Reschedule?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = vbNo Then
+                    Exit Sub
+                End If
+            End If
+
+            'MsgBox("Unable to reschedule this appointments." & vbCrLf & vbCrLf & "Too many Cancelations / Reschedules!" & vbCrLf & vbCrLf & "We can continue to service this patient with no schedule only.", MsgBoxStyle.Exclamation)
+            'Exit Sub
+        End If
+
+        Dim SchH As Integer = CInt(Val(ActiveSheet.Cells(CL.Row.Index, 0).Text))
+        Dim SchM As Integer = CInt(Val(ActiveSheet.Cells(CL.Row.Index, 1).Text))
+        Dim SchAM As String = ActiveSheet.Cells(CL.Row.Index, 0).Text.Mid(4, 2)
+        Dim ScheduleDateTime As Date = CDate(DateTimePicker1.Value.Date.ToString("MM/dd/yyyy") & " " & SchH & ":" & SchM & " " & SchAM)
+
+        frmScheduleMove.Height = Me.Height
+        frmScheduleMove.DiagID = CLng(ActiveSheet.ColumnHeader.Columns(ActiveSheet.ActiveColumn.Index).Tag)
+        frmScheduleMove.MoveCell = CL
+        frmScheduleMove.CurrentSchedule = ScheduleDateTime
+        frmScheduleMove.Label1.Text = UCase("ReSchedule Appointment For: " & CL.Text & "  -  Current Schedule: " & ScheduleDateTime)
+        frmScheduleMove.Label1.Tag = CL.Text & "  -  Current Schedule: " & ScheduleDateTime
+        frmScheduleMove.MinimizeBox = False
+        frmScheduleMove.MaximizeBox = False
+        frmScheduleMove.PassedTimeScheduleUnloacked = PassedTimeScheduleUnloacked
+        frmScheduleMove.ShowDialog(Me)
+        frmScheduleMove.Dispose()
+        Calculate_Totals()
+    End Sub
+
+    Private Sub ReScheduleToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ReScheduleToolStripMenuItem.Click
+        ToolStripButtonReSchedule_Click(Nothing, Nothing)
+    End Sub
+
+    Private Sub FpSpreadProcedures_CellClick(ByVal sender As Object, ByVal e As FarPoint.Win.Spread.CellClickEventArgs) Handles FpSpreadProcedures.CellClick
+
+    End Sub
+
+    Private Sub FpSpreadDetails_CellClick(ByVal sender As Object, ByVal e As FarPoint.Win.Spread.CellClickEventArgs) Handles FpSpreadDetails.CellClick
+
+    End Sub
+
+    Private Sub ToolStripMenuItemCoupon_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItemCoupon.Click
+        Dim intCounter As Integer
+        Dim CR As ReportDocument
+        Dim ConInfo As New TableLogOnInfo
+        Dim ID As Long
+        Dim PatientID As Long
+        Dim Msg As String = ""
+        Dim CL As FarPoint.Win.Spread.Cell = ActiveSheet.ActiveCell
+        Application.DoEvents()
+        If CL Is Nothing Then Exit Sub
+        If CL.Text = "" Then Exit Sub
+        PatientID = CType(CL.Tag, ScheduleInfo).PatientID
+        Dim CC As Long = gSQLGetSingleValue("SELECT COUNT(*) FROM ComplimentaryCoupon Where PatientID=" & PatientID)
+        If CC = 0 Then
+            Msg = "Please confirm you want to print the Complimentary Coupon for " & vbCrLf & CL.Text & "?"
+        ElseIf CC = 1 Then
+            Msg = "Please confirm you want to print the Complimentary Coupon for " & vbCrLf & CL.Text & vbCrLf & vbCrLf & "This patient is already received " & CC & " coupon!"
+        Else
+            Msg = "Please confirm you want to print the Complimentary Coupon for " & vbCrLf & CL.Text & vbCrLf & vbCrLf & "This patient is already received " & CC & " coupon(s)!"
+        End If
+        If MsgBox(Msg, MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+            Exit Sub
+        End If
+        gSQLUpdateData("INSERT INTO ComplimentaryCoupon (PatientID) VALUES(" & PatientID & ")")
+        ID = gSQLGetSingleValue("SELECT IDENT_CURRENT('ComplimentaryCoupon')")
+        gUpdate_Profile_Log(PatientID, PatientLogTypes.tScheduleCouponPrinted, "Complimentary Coupon Printed: " & Now)
+
+        CR = New eMedicalOffice.rptComplimentaryCoupon
+        'ConInfo.ConnectionInfo.UserID = gSQLServerUID
+        'ConInfo.ConnectionInfo.Password = gSQLServerPassword
+        'ConInfo.ConnectionInfo.ServerName = gSQLServerName
+        'ConInfo.ConnectionInfo.DatabaseName = gSQLServerDatabase
+
+        'For intCounter = 0 To CR.Database.Tables.Count - 1
+        '    CR.Database.Tables(intCounter).LogOnInfo.ConnectionInfo.UserID = gSQLServerUID
+        '    CR.Database.Tables(intCounter).LogOnInfo.ConnectionInfo.Password = gSQLServerPassword
+        '    CR.Database.Tables(intCounter).LogOnInfo.ConnectionInfo.ServerName = gSQLServerName
+        '    CR.Database.Tables(intCounter).LogOnInfo.ConnectionInfo.DatabaseName = gSQLServerDatabase
+        '    Application.DoEvents()
+        '    CR.Database.Tables(intCounter).ApplyLogOnInfo(ConInfo)
+        '    Application.DoEvents()
+        'Next
+        'CR.Refresh()
+        If SetupCrystalSecurityInfo(CR) = False Then Exit Sub
+        CR.SetParameterValue("ID", ID)
+        If gPrinterFileLabel <> "" Then CR.PrintOptions.PrinterName = gPrinterFileLabel
+        CR.PrintOptions.ApplyPageMargins(New PageMargins(0, 0, 0, 0))
+        CR.PrintToPrinter(1, False, 0, 0)
+
+    End Sub
+
+    Private Sub CommentsToolStripMenu_Click(ByVal sender As Object, ByVal e As EventArgs) Handles CommentsToolStripMenu.Click
+        Add_Patient_Comments()
+    End Sub
+
+    Private Sub Add_Patient_Comments()
+        Dim ID As Long
+        Dim CL As FarPoint.Win.Spread.Cell = ActiveSheet.ActiveCell
+        If CL Is Nothing Then Exit Sub
+        ID = Val(CType(CL.Tag, ScheduleInfo).PatientID)
+        If ID = 0 Then Exit Sub
+        frmPatientComment.calledForm = Me
+        frmPatientComment.TextBoxCommentExisting.Text = PatientComments
+        frmPatientComment.PatientID = ID
+        frmPatientComment.MinimizeBox = False
+        frmPatientComment.MaximizeBox = False
+
+        frmPatientComment.ShowDialog()
+        frmPatientComment.Dispose()
+    End Sub
+
+    Private Sub cmdComments_Click(ByVal sender As Object, ByVal e As EventArgs) Handles cmdComments.Click
+        Add_Patient_Comments()
+    End Sub
+
+    Private Sub PrintPatientsChartToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles PrintPatientsChartToolStripMenuItem.Click
+        Print_Chart()
+    End Sub
+
+    Private Sub Print_Chart()
+        Dim frm As Form = FormsCollection.FindForm("frmPatient")
+        Dim PatientID As Long = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).PatientID
+        Dim CasePrivate = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).CaseTypeID = 3
+        Dim ScheduleID = CType(ActiveSheet.ActiveCell.Tag, ScheduleInfo).ScheduleID
+        Dim PatientProcedureID() As String
+        Dim I
+        Dim Reader As SqlClient.SqlDataReader
+        Dim BP As New ArrayList
+        Try
+            Reader = gSQLGetDataReader("Select PatientProcedureID, BillingProviderID FROM PatientProcedures WHERE ScheduleID = " & ScheduleID)
+            If Reader Is Nothing Then Exit Sub
+            If Reader.HasRows = False Then Exit Sub
+            Do Until Reader.Read = False
+                If BP.Contains(Reader("BillingProviderID").ToString()) = False Then
+                    BP.Add(Reader("BillingProviderID").ToString())
+                    ReDim Preserve PatientProcedureID(I)
+                    PatientProcedureID(I) = Reader("PatientProcedureID").ToString()
+                    I = I + 1
+                End If
+            Loop
+            If IsArray(PatientProcedureID) = False Then Exit Sub
+            Cursor = Cursors.WaitCursor
+            frmChart.Button1.Visible = False
+            frmChart.Button2.Visible = False
+            frmChart.PatientID = PatientID
+            frmChart.ChartShouldBePrinted = True
+            frmChart.Setup_report(PatientProcedureID, CasePrivate, 0)
+            frmChart.MinimizeBox = False
+            frmChart.MaximizeBox = False
+
+            frmChart.ShowDialog(Me)
+            frmChart.Dispose()
+
+            Cursor = Cursors.Default
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+        End Try
+    End Sub
+
+    Private Sub mnuScheduledProceduresLabel_Click(ByVal sender As Object, ByVal e As EventArgs) Handles mnuScheduledProceduresLabel.Click
+        Dim intCounter As Integer
+        Dim CR As ReportDocument
+        Dim SQL As String
+        Dim ConInfo As New TableLogOnInfo
+        Dim ScheduleID As Long
+        Dim PatientID As Long
+        Dim Msg As String = ""
+        Dim CL As FarPoint.Win.Spread.Cell = ActiveSheet.ActiveCell
+        Dim crParameterDiscreteValue As ParameterDiscreteValue = Nothing
+        Dim crParameterFieldDefinitions As ParameterFieldDefinitions = Nothing
+        Dim crParameterFieldLocation As ParameterFieldDefinition = Nothing
+        Dim crParameterValues As ParameterValues = Nothing
+        Dim Reader As SqlClient.SqlDataReader
+        Application.DoEvents()
+        If CL Is Nothing Then Exit Sub
+        If CL.Text = "" Then Exit Sub
+        PatientID = CType(CL.Tag, ScheduleInfo).PatientID
+        ScheduleID = CType(CL.Tag, ScheduleInfo).ScheduleID
+
+        CR = New rptProceduresLabel
+        'Select Case gCDEnvelopeLabelType
+        '        Case 1
+        '            CR = New rptProceduresFileLabelDK_2205
+        '        Case 2
+        '            CR = New rptProceduresFileLabelDK_1209
+        '        Case Else
+        '        CR = New rptProceduresFileLabel
+        'End Select
+
+        If SetupCrystalSecurityInfo(CR) = False Then Exit Sub
+
+        SQL = " Select Schedule.ScheduleID "
+        SQL &= " FROM Schedule INNER JOIN PatientProcedures ON Schedule.ScheduleID = PatientProcedures.ScheduleID "
+        SQL &= " WHERE (PatientProcedures.PatientID = " & PatientID & ") "
+        SQL &= " AND (PatientProcedures.ProcedureStatusID<>0 and PatientProcedures.OfficeID = " & gOfficeID & " and ScheduleDateTime > '" & DateTimePicker1.Value.Date & " 00:00" & "' and ScheduleDateTime < '" & DateTimePicker1.Value.Date & " 23:59" & "' )"
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then
+            MsgBox("System Error. Please call system administrator.", MsgBoxStyle.Critical)
+            Exit Sub
+        End If
+        If Reader.HasRows = False Then
+            MsgBox("System Error. Please call system administrator.", MsgBoxStyle.Critical)
+            Exit Sub
+        End If
+        crParameterFieldDefinitions = CR.DataDefinition.ParameterFields
+
+        Do Until Reader.Read = False
+            crParameterFieldLocation = crParameterFieldDefinitions.Item("ScheduleID")
+            crParameterValues = crParameterFieldLocation.CurrentValues
+            crParameterDiscreteValue = New CrystalDecisions.Shared.ParameterDiscreteValue
+            crParameterDiscreteValue.Value = Reader("ScheduleID").ToString
+            crParameterValues.Add(crParameterDiscreteValue)
+        Loop
+
+        crParameterFieldLocation.ApplyCurrentValues(crParameterValues)
+        CR.SetParameterValue("PACSPatientIDPadded", Val(gPACSPatientIDPadded))
+        'If gPrinterFileLabel <> "" Then CR.PrintOptions.PrinterName = gPrinterFileLabel
+        If gPrinterNF3 <> "" Then CR.PrintOptions.PrinterName = gPrinterNF3
+        'CR.PrintOptions.PaperSize = PaperSize.DefaultPaperSize
+        CR.PrintOptions.ApplyPageMargins(New PageMargins(0, 0, 0, 0))
+
+        CR.PrintToPrinter(1, False, 0, 0)
+
+    End Sub
+
+    Private Sub Panel2_Paint(ByVal sender As Object, ByVal e As Windows.Forms.PaintEventArgs) Handles Panel2.Paint
+
+    End Sub
+
+    Private Sub PrintFullScheduleToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles PrintFullScheduleToolStripMenuItem.Click
+        PrintSchedule(True)
+    End Sub
+
+    Private Sub PrintAppointmentsOnlyToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles PrintAppointmentsOnlyToolStripMenuItem.Click
+        PrintSchedule(False)
+    End Sub
+
+    Private Sub TimerCheckNoShow_Tick(ByVal sender As Object, ByVal e As EventArgs) Handles TimerCheckNoShow.Tick
+        TimerCheckNoShow.Interval = 3600000
+        If Now.Hour > 22 Then
+            Dim T As New Threading.Thread(AddressOf Track_Noshows)
+            T.Start()
+        End If
+    End Sub
+
+    Private Sub FpSpreadRpt_CellClick(ByVal sender As Object, ByVal e As FarPoint.Win.Spread.CellClickEventArgs) Handles FpSpreadRpt.CellClick
+
+    End Sub
+
+    Private Sub ToolStripButton4_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripButton4.Click
+        frmScheduleFindPatient.frm = Me
+        frmScheduleFindPatient.ShowDialog(Me)
+        frmScheduleFindPatient.Dispose()
+    End Sub
+
+    Private Sub TimerResizeRows_Tick(ByVal sender As Object, ByVal e As EventArgs) Handles TimerResizeRows.Tick
+        TimerResizeRows.Enabled = False
+        Resize_Rows()
+    End Sub
+
+    Private Sub Resize_Rows()
+        Dim SpreadHeight As Double
+        Dim RowHeight As Double
+        Dim i As Integer
+        SpreadHeight = FpSpreadSchedule.Height - ActiveSheet.ColumnHeader.Rows(0).Height
+        RowHeight = ActiveSheet.Rows(0).Height + 1
+        If SpreadHeight > RowHeight * ActiveSheet.RowCount Then
+            If (SpreadHeight / ActiveSheet.RowCount) - 1 > 20 Then
+                FpSpreadSchedule.SuspendLayout()
+                For i = 0 To ActiveSheet.RowCount - 1
+                    ActiveSheet.Rows(i).Height = (SpreadHeight / ActiveSheet.RowCount) - 1
+                Next
+                FpSpreadSchedule.ResumeLayout()
+            End If
+        End If
+    End Sub
+
+    Private Sub TodayToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles TodayToolStripMenuItem.Click
+        DateTimePicker1.Value = Now
+    End Sub
+
+    Private Sub DaysToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles DaysToolStripMenuItem.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 5, Now)
+    End Sub
+
+    Private Sub DaysForwardToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles DaysForwardToolStripMenuItem.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 10, Now)
+    End Sub
+
+    Private Sub DaysForwardToolStripMenuItem1_Click(ByVal sender As Object, ByVal e As EventArgs) Handles DaysForwardToolStripMenuItem1.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 15, Now)
+    End Sub
+
+    Private Sub DaysForwardToolStripMenuItem2_Click(ByVal sender As Object, ByVal e As EventArgs) Handles DaysForwardToolStripMenuItem2.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 20, Now)
+    End Sub
+
+    Private Sub mnu1WeekForward_Click(ByVal sender As Object, ByVal e As EventArgs) Handles mnu1WeekForward.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 7, Now)
+    End Sub
+
+    Private Sub mnu2WeeksForward_Click(ByVal sender As Object, ByVal e As EventArgs) Handles mnu2WeeksForward.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 14, Now)
+    End Sub
+
+    Private Sub WeeksForwardToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles WeeksForwardToolStripMenuItem.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 21, Now)
+    End Sub
+
+    Private Sub WeeksForwardToolStripMenuItem1_Click(ByVal sender As Object, ByVal e As EventArgs) Handles WeeksForwardToolStripMenuItem1.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 28, Now)
+    End Sub
+
+    Private Sub MonthToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles MonthToolStripMenuItem.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 1, Now)
+    End Sub
+
+    Private Sub MonthsToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles MonthsToolStripMenuItem.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 2, Now)
+    End Sub
+
+    Private Sub MonthsToolStripMenuItem1_Click(ByVal sender As Object, ByVal e As EventArgs) Handles MonthsToolStripMenuItem1.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 3, Now)
+    End Sub
+
+    Private Sub MonthsToolStripMenuItem2_Click(ByVal sender As Object, ByVal e As EventArgs) Handles MonthsToolStripMenuItem2.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 4, Now)
+    End Sub
+
+    Private Sub MonthsToolStripMenuItem3_Click(ByVal sender As Object, ByVal e As EventArgs) Handles MonthsToolStripMenuItem3.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 5, Now)
+    End Sub
+
+    Private Sub MonthsToolStripMenuItem4_Click(ByVal sender As Object, ByVal e As EventArgs) Handles MonthsToolStripMenuItem4.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 6, Now)
+    End Sub
+
+    Private Sub TomorrowToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles TomorrowToolStripMenuItem.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 1, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem1_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem1.Click
+        DateTimePicker1.Value = Now
+    End Sub
+
+    Private Sub ToolStripMenuItem2_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem2.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 1, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem3_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem3.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 5, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem4_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem4.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 10, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem5_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem5.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 15, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem6_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem6.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 20, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem7_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem7.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 7, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem8_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem8.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 14, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem9_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem9.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 21, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem10_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem10.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Day, 28, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem11_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem11.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 1, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem12_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem12.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 2, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem13_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem13.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 3, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem14_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem14.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 4, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem15_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem15.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 5, Now)
+    End Sub
+
+    Private Sub ToolStripMenuItem16_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripMenuItem16.Click
+        DateTimePicker1.Value = DateAdd(DateInterval.Month, 6, Now)
+    End Sub
+
+    Private Sub Button2_Click(ByVal sender As Object, ByVal e As EventArgs) Handles Button2.Click
+        Me.Hide()
+    End Sub
+
+    Private Sub ToolStripButtonCloseForm_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ToolStripButtonCloseForm.Click
+        Me.Close()
+    End Sub
+
+    Private Sub frmSchedule_Resize(ByVal sender As Object, ByVal e As EventArgs) Handles Me.Resize
+        ToolStripButtonCloseForm.Visible = Me.WindowState = FormWindowState.Maximized
+    End Sub
+
+    Private Sub frmSchedule_Shown(ByVal sender As Object, ByVal e As EventArgs) Handles Me.Shown
+        ToolStripButtonCloseForm.Visible = Me.WindowState = FormWindowState.Maximized
+    End Sub
+
+    Private Sub CashPaymentToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles CashPaymentToolStripMenuItem.Click
+        Dim SI As ScheduleInfo
+        Dim C As FarPoint.Win.Spread.Cell
+        Dim ScheduleID As Long
+        C = ActiveSheet.ActiveCell
+        SI = CType(C.Tag, ScheduleInfo)
+        ScheduleID = SI.ScheduleID
+        If SI.CaseTypeID = 4 Then
+            frmCashPayment.ScheduleID = ScheduleID
+            frmCashPayment.MinimizeBox = False
+            frmCashPayment.MaximizeBox = False
+            If frmCashPayment.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+                SI.ProcedurePaid = 1
+                C.Tag = SI
+            End If
+        End If
+    End Sub
+
+    Private Sub ToolStripButton12_Click(sender As Object, e As EventArgs) Handles ToolStripButton12.Click, ToolStripButton12.DoubleClick
+        SetFont(1)
+    End Sub
+
+    Private Sub ToolStripButton13_Click(sender As Object, e As EventArgs) Handles ToolStripButton13.Click, ToolStripButton13.DoubleClick
+        SetFont(-1)
+    End Sub
+
+    Private PassedTimeScheduleUnloacked As Boolean
+
+    Private Function LockSchedule()
+        If (PassedTimeScheduleUnloacked) Then
+        Else
+
+        End If
+    End Function
+
+    Private Sub cmdScheduleOld_Click(sender As Object, e As EventArgs) Handles cmdScheduleOld.Click
+        Dim ApprovedByID As Long
+        Dim ApprovedByName As String
+
+        If (PassedTimeScheduleUnloacked) Then
+            PassedTimeScheduleUnloacked = False
+            cmdScheduleOld.Image = My.Resources.OldTimeOff
+        Else
+            If gCurrentEmployee.PositionID > 3 Then
+                frmSupervisorApproval.LabelMsg.Text = "Unlock Passed time schedule." & vbCrLf & "Function allowed to create schedules to the passed date time"
+                If frmSupervisorApproval.ShowDialog <> Windows.Forms.DialogResult.OK Then
+                    frmSupervisorApproval.Dispose()
+                    Exit Sub
+                End If
+                ApprovedByID = frmSupervisorApproval.SupervisorID
+                ApprovedByName = frmSupervisorApproval.SupervisorName
+                frmSupervisorApproval.Dispose()
+            Else
+                If MsgBox("Please confirm you want to Unlock Passed time schedule." & vbCrLf & "Function allowed to create schedules to the passed date time", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = vbNo Then
+                    Exit Sub
+                End If
+                ApprovedByName = gCurrentEmployee.FName & " " & gCurrentEmployee.LName
+            End If
+            cmdScheduleOld.Image = My.Resources.OldTimeOn
+            PassedTimeScheduleUnloacked = True
+        End If
+        Timer1_Tick(Nothing, Nothing)
+    End Sub
+
+    Private Sub ToolStripButtonDetach_Click(sender As Object, e As EventArgs) Handles ToolStripButtonDetach.Click
+        FpSpreadSchedule.Focus()
+        ToolStripButtonDetach.Image = gDetachAttachWindow(Me, MDIForm1Win8)
+    End Sub
+
+    Private Sub frmSchedule_ParentChanged(sender As Object, e As EventArgs) Handles MyBase.ParentChanged
+        If MdiParent Is Nothing Then
+            PanelTop.Visible = True
+        Else
+            PanelTop.Visible = False
+        End If
+    End Sub
+
+    Private Sub ToolStripMenuItem17_Click(sender As Object, e As EventArgs) Handles ToolStripMenuItem17.Click
+        For Each TSi In ToolStrip1.Items
+            TSi.Visible = True
+        Next
+    End Sub
+
+    Private ApprovedByID As Integer
+
+    Private Sub ToolStripMenuItemBlock_Click(sender As Object, e As EventArgs) Handles ToolStripMenuItemBlock.Click
+        If ActiveSheet.ActiveColumn.Index < 0 Or ActiveSheet.ActiveRow.Index < 0 Then
+            Return
+        End If
+        Dim r As Integer = ActiveSheet.ActiveRow.Index
+        Dim c As Integer = ActiveSheet.ActiveColumn.Index
+        Dim DiagID As Long = CLng(ActiveSheet.ColumnHeader.Columns(ActiveSheet.ActiveColumn.Index).Tag)
+        Dim SchH As Integer = CInt(Val(ActiveSheet.Cells(r, 0).Text))
+        Dim SchM As Integer = CInt(Val(ActiveSheet.Cells(r, 1).Text))
+        Dim SchAM As String = ActiveSheet.Cells(r, 0).Text.Mid(4, 2)
+        Dim DT As DateTime = CDate(DateTimePicker1.Value.Date.ToString("MM/dd/yyyy") & " " & SchH & ":" & SchM & " " & SchAM)
+        Dim SI As ScheduleInfo = ActiveSheet.Cells(r, c).Tag
+        If ToolStripMenuItemBlock.Text = "Block Spot" Then
+            Dim frm As frmScheduleBlockSpot = New frmScheduleBlockSpot()
+            frm.calledForm = Me
+            frm.DT = DT
+            frm.DiagID = DiagID
+            frm.LabelDateTime.Text = DT
+            frm.AdminLoggedIn = AdminLoggedIn
+            If frm.ShowDialog(Me) = DialogResult.OK Then
+                AdminLoggedIn = True
+                TimerSecurity.Enabled = False
+                TimerSecurity.Enabled = True
+                SI.SchedulkeBlockID = SchedulkeBlockID
+                SI.ToolTip = "" & SchedulkeBlockComment
+                SI.ToolTip = SI.ToolTip & vbCrLf & "" & gCurrentEmployee.FName & " " & gCurrentEmployee.LName
+                ActiveSheet.Cells(r, c).Tag = SI
+                ActiveSheet.Cells(r, c).Locked = True
+                ActiveSheet.Cells(r, c).BackColor = Color.Gray
+                Dim CT As New FarPoint.Win.Spread.CellType.TextCellType
+                CT.BackgroundImage = New FarPoint.Win.Picture(My.Resources.ScheduleLocked)
+                CT.BackgroundImage.AlignHorz = FarPoint.Win.HorizontalAlignment.Left
+                CT.BackgroundImage.AlignVert = FarPoint.Win.VerticalAlignment.Center
+                'CT.BackgroundImage.Style = FarPoint.Win.RenderStyle.Tile
+                ActiveSheet.Cells(r, c).CellType = CT
+                SchedulkeBlockID = 0
+                SchedulkeBlockComment = ""
+                ActiveSheet.Cells(r, c).Tag = SI
+            End If
+        Else
+            Dim ApprovedByID As Integer
+            If AdminLoggedIn = False Then
+                frmSupervisorApproval.LabelMsg.Text = "Unblock the schedule spot: " & vbCrLf & DT & " ?"
+                If frmSupervisorApproval.ShowDialog <> Windows.Forms.DialogResult.OK Then
+                    frmSupervisorApproval.Dispose()
+                    Exit Sub
+                End If
+                ApprovedByID = frmSupervisorApproval.SupervisorID
+                frmSupervisorApproval.Dispose()
+            Else
+                If MsgBox("Please confirm you want to unblock the schedule spot: " & vbCrLf & DT & " ?", MsgBoxStyle.YesNo + MsgBoxStyle.Exclamation, "Confirm") = MsgBoxResult.No Then
+                    Return
+                End If
+            End If
+            If ApprovedByID = 0 Then
+                ApprovedByID = gCurrentEmployee.EmpID
+            End If
+            AdminLoggedIn = True
+            TimerSecurity.Enabled = False
+            TimerSecurity.Enabled = True
+            gSQLUpdateData("UPDATE [ScheduleBlock]  SET Removedby = " & ApprovedByID & ", RemovedByDT = getdate()  WHERE ID = " & SI.SchedulkeBlockID)
+            SI.SchedulkeBlockID = 0
+            ActiveSheet.Cells(r, c).Locked = False
+            ActiveSheet.Cells(r, c).BackColor = Color.White
+            Dim CT As New FarPoint.Win.Spread.CellType.TextCellType
+            ActiveSheet.Cells(r, c).CellType = CT
+            SI.SchedulkeBlockID = 0
+            SI.ToolTip = ""
+            ActiveSheet.Cells(r, c).Tag = SI
+        End If
+
+    End Sub
+
+    Private Sub TimerSecurity_Tick(sender As Object, e As EventArgs) Handles TimerSecurity.Tick
+        TimerSecurity.Enabled = False
+        AdminLoggedIn = False
+        ApprovedByID = 0
+    End Sub
+
+    Private Sub TimerReloadSchedule_Tick(sender As Object, e As EventArgs) Handles TimerReloadSchedule.Tick
+        TimerReloadSchedule.Enabled = False
+        ' Reload Schedule
+        DateTimePicker1_ValueChanged(Nothing, Nothing)
+    End Sub
+
+End Class

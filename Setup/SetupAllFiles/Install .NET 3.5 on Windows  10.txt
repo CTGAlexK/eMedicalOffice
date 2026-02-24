@@ -1,0 +1,15 @@
+copy microsoft-windows-netfx3-ondemand-package to c drive
+Run CMD as admin
+Past
+Dism.exe /online /enable-feature /featurename:NetFX3 /source:C:\ /LimitAccess
+
+If not installing from c:\
+Create folder C:\aaa
+Move file
+Run
+Dism.exe /online /enable-feature /featurename:NetFX3 /source:C:\aaa\ /LimitAccess
+
+Another Way
+Open Services
+Find Windows Update service
+Start

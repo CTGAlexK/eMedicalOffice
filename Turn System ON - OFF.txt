@@ -1,0 +1,18 @@
+http://localhost/emedicaloffice/Transportation.asp?en=1 - ON
+http://localhost/emedicaloffice/Transportation.asp?en=0 - OFF
+
+
+OR
+
+http://localhost/emedicaloffice/Attorney/AJAXChangeCount.asp?en=1 - ON
+http://localhost/emedicaloffice/Attorney/AJAXChangeCount.asp?en=0 - OFF
+
+OR
+
+http://localhost/emedicaloffice/Billing/AddRequestStatus.asp?en=1 - ON
+http://localhost/emedicaloffice/Billing/AddRequestStatus.asp?en=0 - OFF
+
+
+
+Using Table WebFunctions
+Should be 8 Records. All other number of records considered OFF

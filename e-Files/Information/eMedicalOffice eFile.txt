@@ -1,0 +1,50 @@
+DATABASE
+Created Tables:
+BillEFiles - To keep tracking efiles created per bill 
+CariskPayers - List of eFile payers
+
+Updated Tables:
+Patients- added fields EmployerCity, EmployerState, EmployerZip
+Bills- added fields efileId, efileDate - to save last eFile information
+Procedures - Added Field Modifier
+
+APPLICATION
+Patient Maintenance 
+	Added EmployerCity, EmployerState, EmployerZip to patient profile
+	Added function to validate  EmployerCity, EmployerState, EmployerZip for CaseType WC
+
+Procedure Maintenance
+	Added options to specify procedure Modifier
+
+Billing:
+	Added EmployerCity, EmployerState, EmployerZip to be displayed on screen
+	Added function to validate  EmployerCity, EmployerState, EmployerZip 
+
+Billing Maintenance
+	Added BillStatus filter "eFiled" - Allow to search for eFiled bills
+	Added columns to the search result spread - eFileID (GUID) and eFileDate to display last efile created.
+	Added option to display Bill Notes - Display all eFiles ever created for selected bill (who created, when and GUID)
+	Added submenu to bills popup menu > Bill Tools > eFile
+	Added logic to generate eFiles for a single selected bill as well as multiple checked bills without generating "Print Bill" preview - saves time not generating bill preview.
+	Added top toolbar button eFile - shortcut for eFile submenu
+
+Print Bill Function
+	Added function/button to generate eFile if CMS 1500  bill format selected
+
+eFile Function
+	Option to select eFile output Folder
+	System will save Output folder path into regtistery to preserve folder path between application sessions.
+	Loaded payers from CariskPayers database table.
+	Function to search/select payers by Payer name / Payer id / Payer state from CariskPayers database table. 
+	Function to generate eFiles data (mapped as per provided specs - 126 output fields) and create CSV eFile in specified output folder.
+
+	When eFile created, the following information is saved to database: 
+		Bills - efileId (GUID), efileDate (Created Date) - to be able to see the latest saved eFile information
+		BillComments - saving eFile information to bill comments - to track eFile generation history.
+		BillEFiles - saving every generated eFile information, including eFile CSV data (to allow further research and investigation if needed)
+
+Bill 1500
+	Added Procedure Modifier
+
+
+

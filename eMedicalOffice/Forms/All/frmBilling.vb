@@ -1,0 +1,3452 @@
+﻿Imports System.Web.Mail
+Imports System.Drawing.Drawing2D
+Imports CrystalDecisions.CrystalReports.Engine
+Imports CrystalDecisions.Shared
+Imports System.Runtime.InteropServices
+Imports System.Reflection
+Imports log4net
+
+Public Class frmBilling
+    Private m_SortingColumn As ColumnHeader
+    Private d_SortingColumn As ColumnHeader
+    Private p_SortingColumn As ColumnHeader
+    Private m_SortingColumnComments As ColumnHeader
+    Private SaveSelectedItem As ListViewItem
+    Private OpMode As AddEditMode
+    Private KeyDn As Boolean
+    Private SaveCaseStatusID As Long
+    Private Loading As Boolean
+    Public AdminAuthorizedByName As String
+    Private SaveSortDiagnosis As String = " ORDER BY ICDCode "
+    Private log As ILog = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType)
+
+    Private Sub frmBilling_FormClosing(ByVal sender As Object, ByVal e As System.Windows.Forms.FormClosingEventArgs) Handles Me.FormClosing
+        If cmdUpdate.Enabled Then
+            If MsgBox("You have unsaved data. Discard changes?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                e.Cancel = True
+                Exit Sub
+            End If
+        End If
+
+        gListview_Settings(Me, ListViewPatients, ReadWrite.sWrite)
+        gListview_Settings(Me, ListViewProcedures, ReadWrite.sWrite)
+        gListview_Settings(Me, ListViewDiagnosis, ReadWrite.sWrite)
+        'gListview_Settings(Me, ListViewComments, ReadWrite.sWrite)
+        gListview_Settings(Me, ListViewProceduresAll, ReadWrite.sWrite)
+        SaveSetting(My.Application.Info.ProductName, "Settings", "BillingReadingFont", TextBoxReading.Font.Size)
+        SaveSetting(My.Application.Info.ProductName, "Settings", "BillingPrintEachBill", CInt(CheckBox1.Checked))
+        pdfViewer.CloseDocument(False)
+    End Sub
+
+    Private Sub frmBilling_Load(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles MyBase.Load
+        TimerDetails.Stop()
+        Enable_Controls(False)
+        Me.DoubleBuffered = True
+        Me.SetStyle(ControlStyles.OptimizedDoubleBuffer, True)
+        Me.SetStyle(ControlStyles.AllPaintingInWmPaint, True)
+        Dim FontSize As Integer
+        FontSize = GetSetting(My.Application.Info.ProductName, "Settings", "BillingReadingFont", TextBoxReading.Font.Size)
+        TextBoxReading.Font = New Font(TextBoxReading.Font.Name, FontSize, FontStyle.Regular)
+
+        gListview_Settings(Me, ListViewPatients, ReadWrite.sRead, True)
+        gListview_Settings(Me, ListViewProcedures, ReadWrite.sRead, True)
+        gListview_Settings(Me, ListViewDiagnosis, ReadWrite.sRead, True)
+        gListview_Settings(Me, ListViewProceduresAll, ReadWrite.sRead, True)
+
+        m_SortingColumn = ListViewPatients.Columns(1)
+        d_SortingColumn = ListViewDiagnosis.Columns(0)
+        p_SortingColumn = ListViewProcedures.Columns(0)
+        SetFont()
+        Load_Data()
+        DateTimePicker1.MaxDate = Now.Date
+        DateTimePicker1.Value = Now.Date
+        'TimerLoad.Enabled = True
+    End Sub
+
+    Private Sub Load_Data()
+        Loading = True
+        Dim Reader As SqlClient.SqlDataReader
+        Dim I As Integer = 0
+        Dim DDI As ToolStripItem
+        Try
+            Load_Filters()
+
+            cboCaseType.Items.Clear()
+            Reader = gSQLGetDataReader("SELECT     CaseTypeID, Description FROM CaseTypes Where CaseTypeID <> 4 order by ShowOrder")
+            If Reader Is Nothing Then Exit Sub
+            Do Until Reader.Read = False
+                cboCaseType.Items.Add(New ValueDescription(Reader("CaseTypeID").ToString, Reader("Description").ToString))
+            Loop
+
+            cboCaseType.SelectedIndex = 0
+
+            Reader.Close() : Reader.Dispose()
+            DDI = ToolStripButton1.DropDownItems.Add("All To Primary")
+            DDI.ForeColor = Color.Green
+            DDI.Font = New Font(DDI.Font, FontStyle.Regular)
+            DDI = ToolStripButton1.DropDownItems.Add("All To Secondary")
+            DDI.ForeColor = Color.Blue
+            DDI.Font = New Font(DDI.Font, FontStyle.Regular)
+            ToolStripButton1.DropDownItems.Add(New System.Windows.Forms.ToolStripSeparator)
+            For I = 0 To 100 Step 5
+                If I = 50 Then
+                    ToolStripButton1.DropDownItems.Add(New System.Windows.Forms.ToolStripSeparator)
+                    DDI = ToolStripButton1.DropDownItems.Add(100 - I & "% Primary -  " & I & "% Secondary")
+                    ToolStripButton1.DropDownItems.Add(New System.Windows.Forms.ToolStripSeparator)
+                Else
+                    DDI = ToolStripButton1.DropDownItems.Add(100 - I & "% Primary -  " & I & "% Secondary")
+                End If
+
+                If I < 50 Then
+                    DDI.ForeColor = Color.Green
+                ElseIf I = 50 Then
+                    DDI.ForeColor = Color.Black
+                Else
+                    DDI.ForeColor = Color.Blue
+                End If
+                DDI.Font = New Font(DDI.Font, FontStyle.Regular)
+            Next
+            ComboBoxBillingDays.Items.Clear()
+            For I = 1 To 90
+                If I = 1 Then
+                    ComboBoxBillingDays.Items.Add("1 Day")
+                Else
+                    ComboBoxBillingDays.Items.Add(I & " Days")
+                End If
+            Next
+            ComboBoxBillingDays.SelectedIndex = gBillingMinDays - 1
+            Loading = False
+            TimerLoad.Enabled = True
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+
+        End Try
+    End Sub
+
+    Private Sub Load_Filters()
+        Dim Reader As SqlClient.SqlDataReader
+        Dim I As Integer = 0
+        ComboBoxDiagnosisFilter.Items.Clear()
+        ComboBoxDiagnosisFilter.Items.Add(New ValueDescription("-1", "Show All"))
+        ComboBoxDiagnosisFilter.Items.Add(New ValueDescription("-2", "Filter By Procedure"))
+        ComboBoxDiagnosisFilter.Items.Add(New ValueDescription("-3", "Filter By Procedure Diagnostic"))
+        Reader = gSQLGetDataReader("SELECT     TemplateID, TemplateName FROM [BillingTemplates] order by TemplateName ")
+        If Reader Is Nothing Then Exit Sub
+        If Reader.HasRows Then
+            ComboBoxDiagnosisFilter.Items.Add(New ValueDescription("-99", "----------TEMPLATES------------------------------"))
+        End If
+        Do Until Reader.Read = False
+            ComboBoxDiagnosisFilter.Items.Add(New ValueDescription(Reader("TemplateID").ToString, Reader("TemplateName").ToString, "T"))
+        Loop
+        ComboBoxDiagnosisFilter.Items.Add(New ValueDescription("-99", "----------DIAGNOSTICS------------------------------"))
+
+        Reader = gSQLGetDataReader("SELECT     DiagID, DiagName FROM [Diagnostics] Where DiagTypeID<>4 and OfficeID = " & gOfficeID & " order by DiagName ")
+        If Reader Is Nothing Then Exit Sub
+        Do Until Reader.Read = False
+            ComboBoxDiagnosisFilter.Items.Add(New ValueDescription(Reader("DiagID").ToString, Reader("DiagName").ToString))
+        Loop
+        ComboBoxDiagnosisFilter.Items.Add(New ValueDescription("-99", "----------GROUPS------------------------------"))
+        Reader = gSQLGetDataReader("SELECT DISTINCT ICDGroup FROM Diagnosis order by ICDGroup ")
+        If Reader Is Nothing Then Exit Sub
+        Do Until Reader.Read = False
+            ComboBoxDiagnosisFilter.Items.Add(New ValueDescription("-100", Reader("ICDGroup").ToString))
+        Loop
+
+        ComboBoxDiagnosisFilter.SelectedIndex = 1
+
+    End Sub
+
+    Private Sub TimerLoad_Tick(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles TimerLoad.Tick
+        TimerLoad.Enabled = False
+        Clear_Controls()
+        Load_Patients()
+        CheckBox1.Checked = CBool(GetSetting(My.Application.Info.ProductName, "Settings", "BillingPrintEachBill", 1))
+    End Sub
+
+    Private Sub Timer2_Tick(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Timer2.Tick
+        Timer2.Enabled = False
+        TextBoxSearch.BackColor = Color.White
+    End Sub
+
+    Public Sub Load_Patients()
+        Dim Reader As SqlClient.SqlDataReader
+        Dim LI As ListViewItem
+        Dim SQL As String
+        LabelPatient.Text = ""
+        lblCount.Text = ""
+        Clear_Controls()
+        ListViewPatients.Items.Clear()
+        If cboCaseType.SelectedIndex = -1 Then
+            Exit Sub
+        End If
+        Cursor = Cursors.WaitCursor
+
+        Validate_Billing_Data(True)
+
+        SQL = "SELECT DISTINCT MAX(DATEDIFF(d,  Schedule.ScheduleDateTime, getdate()))+1 as Days, Patients.SSN, Patients.PatientID, Patients.FName, Patients.MI, Patients.LName, BillProcedures.BillID "
+        SQL &= " FROM Patients INNER JOIN PatientProcedures ON Patients.PatientID = PatientProcedures.PatientID "
+        SQL &= " LEFT OUTER JOIN BillProcedures ON PatientProcedures.PatientProcedureID = BillProcedures.PatientProcedureID "
+        ' Do not check replicated bills
+        SQL &= " and BillProcedures.BillID not in(select BillID from bills where Bills.BillStatusID=13 and Bills.PatientID = PatientID	)    "
+        SQL &= " LEFT OUTER JOIN PatientProcedureReadings ON PatientProcedures.PatientProcedureID = PatientProcedureReadings.PatientProcedureID INNER JOIN Schedule ON PatientProcedures.ScheduleID = Schedule.ScheduleID "
+        SQL &= " WHERE Patients.OfficeID=" & gOfficeID & " And (Patients.CaseStatusID=1 Or Patients.CaseStatusID=4) "
+        SQL &= " And  (BillProcedures.BillID Is NULL) And (PatientProcedures.ProcedureStatusID = 2 And isnull(PatientProcedures.DoNotBillInd,0)=0) "
+        SQL &= " And Patients.CaseTypeID = " & CType(cboCaseType.SelectedItem, ValueDescription).Value
+        If CType(cboCaseType.SelectedItem, ValueDescription).Value = 1 Then
+            SQL &= " And ((DATEDIFF(d,  Schedule.ScheduleDateTime, getdate()) >=" & ComboBoxBillingDays.SelectedIndex & ") "
+            'SQL &= "Or (select COUNT(*) from Bills where Bills.BillID Is Not NULL And Bills.PatientID = Patients.PatientID) > 0)"
+            SQL &= ")"
+        End If
+
+        If cboInsuranceCompanyID.SelectedIndex > 0 Then
+            If CType(cboInsuranceCompanyID.SelectedItem, ValueDescription).Value1 = "0" Then
+                SQL &= " And (Patients.InsuranceCompanyID in (Select CompanyID From InsuranceCompanies Where GroupID = " & CType(cboInsuranceCompanyID.SelectedItem, ValueDescription).Value & ") "
+                SQL &= " Or Patients.InsuranceCompanyID1 in (Select CompanyID From InsuranceCompanies Where GroupID = " & CType(cboInsuranceCompanyID.SelectedItem, ValueDescription).Value & ")) "
+            Else
+                SQL &= " And (Patients.InsuranceCompanyID = " & CType(cboInsuranceCompanyID.SelectedItem, ValueDescription).Value & " "
+                SQL &= " Or Patients.InsuranceCompanyID1 = " & CType(cboInsuranceCompanyID.SelectedItem, ValueDescription).Value & ") "
+            End If
+
+        End If
+
+        SQL &= " GROUP BY Patients.SSN, Patients.PatientID, Patients.FName, Patients.MI, Patients.LName, BillProcedures.BillID"
+        SQL &= " Order by Days desc, FName, LName "
+        Reader = gSQLGetDataReader(SQL)
+
+        If Reader Is Nothing Then Exit Sub
+        ListViewPatients.ListViewItemSorter = Nothing
+        Do Until Reader.Read = False
+            LI = ListViewPatients.Items.Add(Reader("PatientID").ToString, 1)
+            LI.SubItems.Add(Reader("FName").ToString & " " & Reader("MI").ToString & " " & Reader("LName").ToString)
+            LI.ToolTipText = Reader("FName").ToString & " " & Reader("MI").ToString & " " & Reader("LName").ToString
+            LI.Tag = "" & Reader("PatientID").ToString
+            LI.SubItems(1).Tag = "" & Reader("SSN").ToString
+            LI.SubItems.Add(Reader("Days").ToString)
+            If Reader("Days").ToString >= gBillingMaxDays Then
+                LI.ImageKey = "RED"
+                LI.ForeColor = Color.Red
+                'LI.Font = New Font(LI.Font, FontStyle.Bold)
+                LI.SubItems(1).ForeColor = Color.Red
+                LI.SubItems(2).ForeColor = Color.Red
+            End If
+        Loop
+
+        Reader.Close() : Reader.Dispose()
+        If ListViewPatients.Items.Count > 0 Then
+            ListViewPatients.Items(0).Selected = True
+            ListViewPatients.Items(0).EnsureVisible()
+        Else
+            Clear_Controls()
+        End If
+        lblCount.Text = ListViewPatients.Items.Count & " Patients"
+        Cursor = Cursors.Default
+    End Sub
+
+    Dim KeepBill As Boolean
+
+    Private Sub Clear_Controls()
+        Loading = True
+        gLoop_Clear_Controls(Me, cboCaseType, CheckBox1, TextBoxSearch, ComboBoxBillingDays, cboInsuranceCompanyID)
+        pdfViewer.CloseDocument()
+        pdfViewer.Visible = True
+        ComboBoxDiagnosisFilter.SelectedIndex = 1
+        LabelDOB.ForeColor = Color.Black
+        LabelDOB.Text = "DOB"
+        Loading = False
+        ListViewDocs.Items.Clear()
+        ListViewProcedures.Items.Clear()
+        ListViewDiagnosis.Items.Clear()
+        ListViewProceduresAll.Items.Clear()
+        lblClaim.Text = ""
+        lblClaim1.Text = ""
+        lblClaim.Tag = Nothing
+        lblClaim1.Tag = Nothing
+        txtAmt.Enabled = False
+        txtAmt1.Enabled = False
+        lblFileSize.Text = ""
+        lblEmployerAddress.AccessibleDescription = ""
+        lblEmployerAddressCity.AccessibleDescription = ""
+        lblEmployerAddressState.AccessibleDescription = ""
+        lblEmployerAddressZip.AccessibleDescription = ""
+        If KeepBill = False Then TreeViewBill.Nodes.Clear()
+        For Each Obj As Object In TabPage1.Controls
+            If TypeOf Obj Is Label Then
+                If Obj.BorderStyle = BorderStyle.Fixed3D Then
+                    Obj.text = ""
+                End If
+            End If
+        Next
+        For Each Obj As Object In TabPage2.Controls
+            If TypeOf Obj Is Label Then
+                If Obj.BorderStyle = BorderStyle.Fixed3D Then
+                    Obj.text = ""
+                End If
+            End If
+        Next
+    End Sub
+
+    Private Sub ListViewPatients_ColumnClick(ByVal sender As Object, ByVal e As System.Windows.Forms.ColumnClickEventArgs) Handles ListViewPatients.ColumnClick
+        Dim new_sorting_column As ColumnHeader = ListViewPatients.Columns(e.Column)
+        ' Figure out the new sorting order.
+        Dim sort_order As System.Windows.Forms.SortOrder
+        If m_SortingColumn Is Nothing Then
+            ' New column. Sort ascending.
+            sort_order = SortOrder.Ascending
+        Else
+            ' See if this is the same column.
+            If new_sorting_column.Equals(m_SortingColumn) Then
+                ' Same column. Switch the sort order.
+
+                'If m_SortingColumn.Text.StartsWith("> ") Then
+                'sort_order = SortOrder.Descending
+                'Else
+                'sort_order = SortOrder.Ascending
+                'End If
+                If m_SortingColumn.ImageKey = "SORT1" Then
+                    sort_order = SortOrder.Descending
+                Else
+                    sort_order = SortOrder.Ascending
+                End If
+            Else
+                ' New column. Sort ascending.
+                sort_order = SortOrder.Ascending
+            End If
+
+            ' Remove the old sort indicator.
+            'm_SortingColumn.Text =             m_SortingColumn.Text.Mid(2)
+            m_SortingColumn.ImageKey = "SORT0"
+        End If
+
+        ' Display the new sort order.
+        m_SortingColumn = new_sorting_column
+        'If sort_order = SortOrder.Ascending Then
+        'm_SortingColumn.Text = "> " & m_SortingColumn.Text
+        'Else
+        'm_SortingColumn.Text = "< " & m_SortingColumn.Text
+        'End If
+        If sort_order = SortOrder.Ascending Then
+            m_SortingColumn.ImageKey = "SORT1"
+        Else
+            m_SortingColumn.ImageKey = "SORT2"
+        End If
+
+        ' Create a comparer.
+        ListViewPatients.ListViewItemSorter = New _
+            ListViewComparer(e.Column, sort_order)
+
+        ' Sort.
+        ListViewPatients.Sort()
+    End Sub
+
+    Private Sub ListViewPatients_EnabledChanged(ByVal sender As Object, ByVal e As System.EventArgs) Handles ListViewPatients.EnabledChanged
+        gHighlightListviewItem(ListViewPatients, True, False)
+    End Sub
+
+    Private Sub ListViewPatients_KeyDown(ByVal sender As Object, ByVal e As System.Windows.Forms.KeyEventArgs) Handles ListViewPatients.KeyDown
+        If e.KeyCode = 40 Or e.KeyCode = 38 Then
+            KeyDn = True
+        End If
+    End Sub
+
+    Private Sub ListViewPatients_KeyUp(ByVal sender As Object, ByVal e As System.Windows.Forms.KeyEventArgs) Handles ListViewPatients.KeyUp
+        If e.KeyCode = 40 Or e.KeyCode = 38 Then
+            KeyDn = False
+            ListViewPatients_SelectedIndexChanged(Nothing, Nothing)
+        End If
+    End Sub
+
+    Private Sub ListViewPatients_MouseDown(ByVal sender As Object, ByVal e As System.Windows.Forms.MouseEventArgs) Handles ListViewPatients.MouseDown
+        TimerDetails.Enabled = False
+        If ListViewPatients.Items.Count = 0 Then
+            ListViewPatients.ContextMenuStrip = Nothing
+            Exit Sub
+        Else
+            ListViewPatients.ContextMenuStrip = ContextMenuPatient
+        End If
+        Dim HI As ListViewHitTestInfo
+        HI = ListViewPatients.HitTest(e.X, e.Y)
+
+        If HI.Item Is Nothing Then
+            ListViewPatients.ContextMenuStrip = Nothing
+        Else
+            ListViewPatients.ContextMenuStrip = ContextMenuPatient
+        End If
+
+    End Sub
+
+    Private Sub Load_Comments()
+        'Dim Reader As SqlClient.SqlDataReader
+        'Dim LI As ListViewItem
+        'Dim SQL As String
+        'ListViewComments.Items.Clear()
+        'Application.DoEvents()
+        'If ListViewPatients.SelectedItems.Count = 0 Then
+        '    Exit Sub
+        'End If
+
+        'If Not m_SortingColumnComments Is Nothing Then m_SortingColumnComments.ImageKey = "SORT0"
+        'm_SortingColumnComments = ListViewComments.Columns(0)
+        ''ListViewComments.Columns(0).ImageKey = "SORT1"
+
+        'Cursor = Cursors.WaitCursor
+        'SQL = "SELECT PatientComments.CommentsID, PatientComments.PatientID, PatientComments.Comment, PatientComments.InsertedDT,  Employees.Fname + ' ' + Employees.Lname AS InsertedByName "
+        'SQL = SQL & " FROM PatientComments INNER JOIN Employees ON PatientComments.InsertedBy = Employees.EmpID "
+        'SQL = SQL & " Where PatientComments.PatientID = " & ListViewPatients.SelectedItems(0).Tag
+        'SQL = SQL & " ORDER BY PatientComments.CommentsID DESC"
+        'Reader = gSQLGetDataReader(SQL)
+        'If Reader Is Nothing Then Exit Sub
+        'Do Until Reader.Read = False
+        '    LI = ListViewComments.Items.Add(CDate(Reader("InsertedDT").ToString).ToString("MM/dd/yyyy hh:mm"))
+        '    LI.SubItems.Add(Reader("Comment").ToString)
+        '    LI.SubItems.Add(Reader("InsertedByName").ToString)
+        '    LI.Tag = Reader("CommentsID").ToString
+        'Loop
+        'Reader.Close():  Reader.Dispose()
+        'If ListViewComments.Items.Count > 0 Then
+        '    ListViewComments.Items(0).Selected = True
+        '    ListViewComments.Items(0).EnsureVisible()
+        '    ListViewComments_SelectedIndexChanged(Nothing, Nothing)
+        'End If
+        'Cursor = Cursors.Default
+    End Sub
+
+    Private Sub ListViewPatients_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ListViewPatients.SelectedIndexChanged
+        gHighlightListviewItem(ListViewPatients, True, False)
+        TimerDetails.Stop()
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            Clear_Controls()
+            LabelPatient.Text = ""
+            Exit Sub
+        Else
+            LabelPatient.Text = ListViewPatients.SelectedItems(0).SubItems(1).Text.ToUpper & "        PROCEDURE AGE: " & ListViewPatients.SelectedItems(0).SubItems(2).Text & " DAYS"
+            If ListViewPatients.SelectedItems(0).ForeColor = Color.Red Then
+                LabelPatient.ForeColor = Color.Red
+            Else
+                LabelPatient.ForeColor = Color.Black
+            End If
+        End If
+        imgWait.Visible = True
+        TimerDetails.Start()
+        If KeyDn = True Then Exit Sub
+
+    End Sub
+
+    Private TimerDetailsRunning As Boolean
+    Private LoadingDetails As Boolean
+
+    Private Sub TimerDetails_Tick(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles TimerDetails.Tick
+        If LoadingDetails Then Exit Sub
+        LoadingDetails = True
+        TimerDetails.Stop()
+        Do Until TimerDetailsRunning = False
+            Application.DoEvents()
+        Loop
+        Dim ID As Long
+        Dim Reader As SqlClient.SqlDataReader
+        Dim SQL As String
+        If ListViewPatients.SelectedItems.Count = 0 Then Exit Sub
+        If KeyDn = True Then Exit Sub
+        TimerDetailsRunning = True
+        TabPage3.Tag = 0
+        TabPage2.Tag = 0
+        Validate_Billing_Data(True)
+        Clear_Controls()
+        ID = CLng(ListViewPatients.SelectedItems(0).Tag)
+        SaveSelectedItem = ListViewPatients.SelectedItems(0)
+        SQL = "SELECT  Patients.*, Patients.phone1 as PatPhone1, Patients.phone2 as PatPhone2, InsuranceCompanies_1.Phone1 as InsPhone1,InsuranceCompanies_1.Contact1,InsuranceCompanies_1.Contact1Phone, Patients.PolicyHolderFName+' '+Patients.PolicyHolderMI+' '+Patients.PolicyHolderLName as PolicyHilder, Patients.PolicyHolderFName1+' '+Patients.PolicyHolderMI1+' '+Patients.PolicyHolderLName1 as PolicyHilder1,  Relationships1.Description as Relation1, Relationships2.Description as Relation2, CaseStatuses.Description AS CaseStatus, MaritalStatuses.Description AS MaritalStatus, EmploymentStatuses.Description AS EmploymentStatus, "
+        SQL &= "              InjuryTypes.InjuryName AS InjuryName, PatientTypes.Description AS PatientType, ReferringOffices.OfficeName AS ReferringOffice, "
+        SQL &= "                      TransportationCompanies.CompanyName AS TransportationCompany, CaseTypes.Description AS CaseType, "
+        SQL &= "                      InsuranceCompanies_1.CompanyName AS InsuranceCompany, InsuranceCompanies_2.CompanyName AS InsuranceCompany1, "
+        SQL &= "                      InsuranceCompanies_1.CompanyName + ' - ' + InsuranceCompanyAddresses_1.Address + ' ' + InsuranceCompanyAddresses_1.City + ' ' + InsuranceCompanyAddresses_1.State + ' ' + InsuranceCompanyAddresses_1.Zip AS ClaimAddress, "
+        SQL &= "                      InsuranceCompanies_2.CompanyName + ' - ' + InsuranceCompanyAddresses_2.Address + ' ' + InsuranceCompanyAddresses_2.City + ' ' + InsuranceCompanyAddresses_2.State + ' ' + InsuranceCompanyAddresses_2.Zip AS ClaimAddress1 , Employees_1.Fname + ' ' + Employees_1.Lname AS UpdatedBy "
+        SQL &= " FROM         Patients LEFT OUTER JOIN "
+        SQL &= "                      Employees Employees_1 ON Patients.UpdatedByEmpID = Employees_1.EmpID LEFT OUTER JOIN "
+        SQL &= "                      InsuranceCompanies InsuranceCompanies_1 ON Patients.InsuranceCompanyID = InsuranceCompanies_1.CompanyID LEFT OUTER JOIN "
+        SQL &= "                      InsuranceCompanies InsuranceCompanies_2 ON Patients.InsuranceCompanyID1 = InsuranceCompanies_2.CompanyID LEFT OUTER JOIN "
+        SQL &= "                      InsuranceCompanyAddresses InsuranceCompanyAddresses_2 ON Patients.ClaimAddressID1 = InsuranceCompanyAddresses_2.AddressID LEFT OUTER JOIN "
+        SQL &= "                      CaseTypes ON Patients.CaseTypeID = CaseTypes.CaseTypeID LEFT OUTER JOIN "
+        SQL &= "                      InsuranceCompanyAddresses InsuranceCompanyAddresses_1 ON Patients.ClaimAddressID = InsuranceCompanyAddresses_1.AddressID LEFT OUTER JOIN "
+        SQL &= "                      TransportationCompanies ON Patients.TransportationCompanyID = TransportationCompanies.CompanyID LEFT OUTER JOIN "
+        SQL &= "                      ReferringOffices ON Patients.ReferringCompanyID = ReferringOffices.OfficeID LEFT OUTER JOIN "
+        SQL &= "                      PatientTypes ON Patients.PatientTypeID = PatientTypes.PatienttypeID LEFT OUTER JOIN "
+        SQL &= "                      InjuryTypes ON Patients.InjuryID = InjuryTypes.InjuryID LEFT OUTER JOIN "
+        SQL &= "                      EmploymentStatuses ON Patients.EmploymentStatusID = EmploymentStatuses.EmploymentStatusID LEFT OUTER JOIN "
+        SQL &= "                      CaseStatuses ON Patients.CaseStatusID = CaseStatuses.CaseStatusID LEFT OUTER JOIN "
+        SQL &= "                      MaritalStatuses ON Patients.MaritalStatusID = MaritalStatuses.MaritalStatusID  LEFT OUTER JOIN "
+        SQL &= "                      Relationships Relationships1 ON Patients.RelationToInsuredID = Relationships1.RelationshipID    LEFT OUTER JOIN "
+        SQL &= "                      Relationships Relationships2 ON Patients.RelationToInsuredID1 = Relationships2.RelationshipID "
+
+        SQL &= " Where PatientID = " & ID
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then LockWindowUpdate(0) : LoadingDetails = False : TimerDetailsRunning = False : Exit Sub
+        Do Until Reader.Read = False
+
+            lblPatientID.Text = "" & Reader("PatientID").ToString
+            lblInsertedDT.Text = CDate(Reader("InsertedDT").ToString).ToString("MM/dd/yy")
+            If IsDate(Reader("CaseStatusDate")) Then
+                lblCaseStatusDT.Text = CDate(Reader("CaseStatusDate").ToString).ToString("MM/dd/yy")
+            Else
+                lblCaseStatusDT.Text = DateTime.Now.ToString("MM/dd/yy")
+            End If
+            lblCaseStatusID.Text = Reader("CaseStatus").ToString
+            SaveCaseStatusID = CInt(Val(Reader("CaseStatusID").ToString))
+            lblFName.Text = "" & Reader("FName").ToString
+            lblMI.Text = "" & Reader("MI").ToString
+            lblLName.Text = "" & Reader("LName").ToString
+            lblSuffix.Text = "" & Reader("Suffix").ToString
+            If IsDate(Reader("DOB").ToString) Then lblDOB.Text = CDate(Reader("DOB").ToString).ToString("MM/dd/yyyy")
+            lblSex.Text = "" & Reader("Sex").ToString
+            lblSSN.Text = "" & Reader("SSN").ToString
+            lblAddress1.Text = "" & Reader("Address1").ToString
+            lblAddress2.Text = "" & Reader("Address2").ToString
+            lblCity.Text = "" & Reader("City").ToString
+            lblState.Text = "" & Reader("State").ToString
+            lblZip.Text = "" & Reader("Zip").ToString
+            lblPhone1.Text = "" & Reader("PatPhone1").ToString
+            lblPhone2.Text = "" & Reader("PatPhone2").ToString
+            lblCellPhone.Text = "" & Reader("CellPhone").ToString
+            lblMaritalStatusID.Text = Reader("MaritalStatus").ToString
+            lblEmploymentStatusID.Text = Reader("EmploymentStatus").ToString
+            lblEmployerAddress.Text = Reader("EmployerAddress").ToString
+            lblEmployerAddressCity.Text = Reader("EmployerAddressCity").ToString
+            lblEmployerAddressState.Text = Reader("EmployerAddressState").ToString
+            lblEmployerAddressZip.Text = Reader("EmployerAddressZip").ToString
+            lblEmployerAddress.AccessibleDescription = ""
+            lblEmployerAddressCity.AccessibleDescription = ""
+            lblEmployerAddressState.AccessibleDescription = ""
+            lblEmployerAddressZip.AccessibleDescription = ""
+
+
+            lblOccupation.Text = "" & Reader("Occupation").ToString
+            lblEmployerName.Text = "" & Reader("EmployerName").ToString
+            If IsDate(Reader("DOA").ToString) Then lblDOA.Text = CDate(Reader("DOA").ToString).ToString("MM/dd/yyyy")
+            If IsDate(Reader("ClaimEffectiveDT").ToString) Then lblClaimEffectiveDT.Text = CDate(Reader("ClaimEffectiveDT").ToString).ToString("MM/dd/yyyy")
+            lblPolicyHolder.Text = "" & Reader("PolicyHilder").ToString
+            lblPolicyHolder1.Text = "" & Reader("PolicyHilder1").ToString
+
+            lblClaimNumber.Text = "" & Reader("ClaimNumber").ToString
+            lblClaimNumber1.Text = "" & Reader("ClaimNumber1").ToString
+            lblClaimAddress.Text = "" & Reader("ClaimAddress").ToString
+            lblClaimAddress1.Text = "" & Reader("ClaimAddress1").ToString
+            lblClaimAddress.Tag = "" & Reader("ClaimAddressID").ToString
+            lblClaimAddress1.Tag = "" & Reader("ClaimAddressID1").ToString
+
+            lblInjuryID.Text = Reader("InjuryName").ToString
+            lblPatientTypeID.Text = Reader("PatientType").ToString
+            lblRefferingCompany.Text = Reader("ReferringOffice").ToString
+            lblReferringDoctor.Text = Reader("ReferringDoctor").ToString
+            lblAttorney.Text = Reader("Attorney").ToString
+
+            txtUpdatedDT.Text = CDate(Reader("UpdatedDT").ToString).ToString("MM/dd/yy")
+            txtUpdatedBy.Text = Reader("UpdatedBy").ToString
+
+
+
+            'INSURANCE COMPANY / CLAIM
+            'Primary Insurance
+            lblCaseTypeID.Text = Reader("CaseType").ToString
+            lblCaseTypeID.Tag = Reader("CaseTypeID").ToString
+
+            lblInsPhone1.Text = Reader("InsPhone1").ToString
+            lblInsContact.Text = Reader("Contact1").ToString & IIf(Reader("Contact1Phone").ToString <> "", ", " & Reader("Contact1Phone").ToString, "")
+            lblInsConfirmed.Text = IIf(Val(Reader("InsuranceVerifyed").ToString) = 1, "Verifyed", "")
+
+            lblInsuranceCompanyID.Text = Reader("InsuranceCompany").ToString
+            lblInsuranceCompanyID.Tag = Reader("InsuranceCompanyID").ToString
+            lblInsuranceCompanyID1.Text = Reader("InsuranceCompany1").ToString
+
+            lblInsuranceCompanyID.Tag = Reader("InsuranceCompanyID").ToString
+            lblInsuranceCompanyID1.Tag = Reader("InsuranceCompanyID1").ToString
+
+            lblPolicyNumber.Text = "" & Reader("PolicyNumber").ToString
+            lblIDNumber.Text = "" & Reader("IDNumber").ToString
+            lblGroupNumber.Text = "" & Reader("GroupNumber").ToString
+
+            lblPolicyNumber1.Text = "" & Reader("PolicyNumber1").ToString
+            lblIDNumber1.Text = "" & Reader("IDNumber1").ToString
+            lblGroupNumber1.Text = "" & Reader("GroupNumber1").ToString
+
+            lblAdjuster.Text = "" & Reader("AdjusterName").ToString
+            lblAdjusterPhone.Text = "" & Reader("AdjusterPhone").ToString
+
+            lblAdjuster1.Text = "" & Reader("AdjusterName1").ToString
+            lblAdjusterPhone1.Text = "" & Reader("AdjusterPhone1").ToString
+
+            txtAmt.Tag = 100
+            txtAmt1.Tag = 0
+            If Val(Reader("ClaimAddressID").ToString) > 0 Then
+                lblClaim.Text = Reader("ClaimAddress").ToString.ToUpper
+                lblClaim.Tag = New ValueDescription(Reader("ClaimAddressID").ToString, Reader("ClaimNumber").ToString)
+            End If
+            If Val(Reader("ClaimAddressID1").ToString) > 0 Then
+                lblClaim1.Text = Reader("ClaimAddress1").ToString.ToUpper
+                lblClaim1.Tag = New ValueDescription(Reader("ClaimAddressID1").ToString, Reader("ClaimNumber1").ToString)
+            End If
+            If Val(Reader("ClaimAddressID").ToString) > 0 And Val(Reader("ClaimAddressID1").ToString) > 0 Then
+                ToolStripPct.Visible = True
+            Else
+                ToolStripPct.Visible = False
+            End If
+
+            'If Reader("LockedByIP").ToString <> "" And CInt(Val(Reader("LockByID").ToString)) <> gCurrentEmployee.EmpID Then
+            '    If gPing(Reader("LockedByIP").ToString) = True Then
+            '        lblLocked.Text = "Profile Readonly. Locked On " & CDate(Reader("LockDT").ToString).ToString("MM/dd/yyyy hh:mm") & "  By: " & Reader("LockedByName").ToString
+            '        lblLocked.Visible = True
+            '    Else
+            '        lblLocked.Visible = False
+            '    End If
+            'End If
+            LabelEffectiveDate.ForeColor = Color.Black
+            If IsDate(Reader("ClaimEffectiveDT").ToString) And IsDate(Reader("DOA").ToString) Then
+                If CDate(Reader("ClaimEffectiveDT").ToString) >= CDate(Reader("DOA").ToString) Then
+                    LabelEffectiveDate.ForeColor = Color.IndianRed
+                End If
+            End If
+            lblWCCarrierCaseNumber.Text = Reader("WCCarrierCaseNumber").ToString
+            lblWCCarrierCode.Text = Reader("WCCarrierCode").ToString
+            lblWCCaseNumber.Text = Reader("WCCaseNumber").ToString
+            lblWCPatientAccountNumber.Text = Reader("WCPatientAccountNumber").ToString
+            lblWCEmployerInsuranceCarrier.Text = Reader("WCEmployerInsuranceCarrier").ToString
+            lblWCInsuranceCarrierAddress.Text = Reader("WCInsuranceCarrierAddress").ToString
+            lblWCInsuranceCarrierAddressCity.Text = Reader("WCInsuranceCarrierAddressCity").ToString
+            lblWCInsuranceCarrierAddressState.Text = Reader("WCInsuranceCarrierAddressState").ToString
+            lblWCInsuranceCarrierAddressZip.Text = Replace(Reader("WCInsuranceCarrierAddressZip").ToString, "_", "")
+            lblComments.Text = "" & Reader("Comments").ToString
+        Loop
+        If IsDate(lblDOB.Text) Then
+            If gYearsFromDate(lblDOB.Text) < gUnderAge Then
+                LabelDOB.ForeColor = Color.IndianRed
+                LabelDOB.Text = "DOB Underage"
+            Else
+                LabelDOB.ForeColor = Color.Black
+                LabelDOB.Text = "DOB"
+            End If
+        Else
+            LabelDOB.ForeColor = Color.Black
+            LabelDOB.Text = "DOB"
+        End If
+        'Load_Comments()
+        Load_Parient_Bills()
+        If TabControl1.SelectedIndex = 1 Then
+            TabPage2.Tag = 1
+            Load_PatientProcedures()
+
+        End If
+
+        'Load_Patient_Log()
+        If TabControl1.SelectedIndex = 2 Then
+            TabPage3.Tag = 1
+            Load_Documents(True)
+        End If
+        Load_Comments()
+
+        lblCaseTypeID.AccessibleDescription = ""
+        lblDOA.AccessibleDescription = ""
+        lblSSN.AccessibleDescription = ""
+        lblInsuranceCompanyID.AccessibleDescription = "1"
+        lblPolicyNumber.AccessibleDescription = "2"
+        lblPolicyHolder.AccessibleDescription = "2"
+        lblClaimNumber.AccessibleDescription = "2"
+        lblClaimAddress.AccessibleDescription = "1"
+        lblAttorney.AccessibleDescription = ""
+
+
+
+        lblWCCarrierCaseNumber.AccessibleName = ""
+        lblWCCarrierCode.AccessibleName = ""
+        lblWCCaseNumber.AccessibleName = ""
+        lblWCPatientAccountNumber.AccessibleName = ""
+        lblWCEmployerInsuranceCarrier.AccessibleName = ""
+        lblWCInsuranceCarrierAddress.AccessibleName = ""
+        lblWCInsuranceCarrierAddressCity.AccessibleName = ""
+        lblWCInsuranceCarrierAddressState.AccessibleName = ""
+        lblWCInsuranceCarrierAddressZip.AccessibleName = ""
+
+        lblWCCarrierCaseNumber.AccessibleDescription = ""
+        lblWCCarrierCode.AccessibleDescription = ""
+        lblWCCaseNumber.AccessibleDescription = ""
+        lblWCPatientAccountNumber.AccessibleDescription = ""
+        lblWCEmployerInsuranceCarrier.AccessibleDescription = ""
+        lblWCInsuranceCarrierAddress.AccessibleDescription = ""
+        lblWCInsuranceCarrierAddressCity.AccessibleDescription = ""
+        lblWCInsuranceCarrierAddressState.AccessibleDescription = ""
+        lblWCInsuranceCarrierAddressZip.AccessibleDescription = ""
+        lblEmployerName.AccessibleDescription = ""
+        lblEmployerAddress.AccessibleDescription = ""
+        lblEmployerAddressCity.AccessibleDescription = ""
+        lblEmployerAddressState.AccessibleDescription = ""
+        lblEmployerAddressZip.AccessibleDescription = ""
+        If lblEmploymentStatusID.Text = "Employed" Then
+            lblEmployerAddress.AccessibleDescription = "2"
+            lblEmployerAddressCity.AccessibleDescription = "2"
+            lblEmployerAddressState.AccessibleDescription = "2"
+            lblEmployerAddressZip.AccessibleDescription = "2"
+        End If
+
+        Select Case Val(lblCaseTypeID.Tag)
+            Case 2
+                lblWCCarrierCaseNumber.AccessibleName = "1"
+                lblWCCarrierCode.AccessibleName = "1"
+                lblWCCaseNumber.AccessibleName = "1"
+                lblWCPatientAccountNumber.AccessibleName = "1"
+                lblWCEmployerInsuranceCarrier.AccessibleName = "1"
+                lblWCInsuranceCarrierAddress.AccessibleName = "1"
+                lblWCInsuranceCarrierAddressCity.AccessibleName = "1"
+                lblWCInsuranceCarrierAddressState.AccessibleName = "1"
+                lblWCInsuranceCarrierAddressZip.AccessibleName = "1"
+
+                ' For Electronic Billing the following fields are required.
+                If gEnableElectronicBillFiling Then
+                    lblEmployerName.AccessibleDescription = "1"
+                    lblEmployerAddress.AccessibleDescription = "1"
+                    lblEmployerAddressCity.AccessibleDescription = "1"
+                    lblEmployerAddressState.AccessibleDescription = "1"
+                    lblEmployerAddressZip.AccessibleDescription = "1"
+                End If
+                lblWCCarrierCaseNumber.AccessibleDescription = "2"
+                lblWCCarrierCode.AccessibleDescription = "2"
+                lblWCCaseNumber.AccessibleDescription = "2"
+                lblWCPatientAccountNumber.AccessibleDescription = "2"
+                lblWCEmployerInsuranceCarrier.AccessibleDescription = "2"
+                lblWCInsuranceCarrierAddress.AccessibleDescription = "2"
+                lblWCInsuranceCarrierAddressCity.AccessibleDescription = "2"
+                lblWCInsuranceCarrierAddressState.AccessibleDescription = "2"
+                lblWCInsuranceCarrierAddressZip.AccessibleDescription = "2"
+                lblSSN.AccessibleDescription = "2"
+                lblDOA.AccessibleDescription = "1"
+                If lblEmploymentStatusID.Text = "Employed" Then
+                    lblEmployerAddress.AccessibleDescription = "1"
+                    lblEmployerAddressCity.AccessibleDescription = "1"
+                    lblEmployerAddressState.AccessibleDescription = "1"
+                    lblEmployerAddressZip.AccessibleDescription = "1"
+                End If
+            Case 3  ' Private
+                lblCaseTypeID.AccessibleDescription = "1"
+                lblDOA.AccessibleDescription = ""
+                lblSSN.AccessibleDescription = "2"
+            Case 5  ' Lien
+                lblInsuranceCompanyID.AccessibleDescription = ""
+                lblPolicyNumber.AccessibleDescription = ""
+                lblPolicyHolder.AccessibleDescription = ""
+                lblClaimNumber.AccessibleDescription = ""
+                lblClaimAddress.AccessibleDescription = ""
+                lblAttorney.AccessibleDescription = "1"
+            Case Else
+                lblCaseTypeID.AccessibleDescription = ""
+                lblDOA.AccessibleDescription = "1"
+                lblSSN.AccessibleDescription = "2"
+        End Select
+
+        If Val(lblCaseTypeID.Tag) <> 3 Then 'Private
+            lblCaseTypeID.AccessibleDescription = ""
+            lblDOA.AccessibleDescription = "1"
+            lblSSN.AccessibleDescription = "2"
+        Else
+        End If
+
+        Validate_Billing_Data()
+        imgWait.Visible = False
+        LoadingDetails = False
+        ToolStripAutoResize_Click(Nothing, Nothing)
+        TimerDetailsRunning = False
+    End Sub
+
+    Private Function Validate_Billing_Data(Optional ByVal Clear As Boolean = False) As String
+        Dim CollectMessage As String = ""
+        Dim Pnls As New Collection
+        Dim Pnl As Panel
+        ' AccessibleDescription property used to specify required fields.
+
+        Pnls.Add(TabPage1)
+
+        TabPage1.SuspendLayout()
+        'TabPage2.SuspendLayout()
+        'TabPage4.SuspendLayout()
+
+        For Each Pnl In Pnls
+            For Each Obj As Object In Pnl.Controls
+                If TypeOf Obj Is Label Then
+                    If Obj.BorderStyle = BorderStyle.Fixed3D Then
+                        CType(Obj, Label).BackColor = Color.WhiteSmoke
+                        ToolTip1.SetToolTip(Obj, "")
+                    End If
+                End If
+            Next
+        Next
+
+        If lblFName.Text = "" Then
+            Validate_Billing_Data = ""
+            Exit Function
+        End If
+
+        For Each Pnl In Pnls
+            For Each Obj As Object In Pnl.Controls
+                If TypeOf Obj Is Label Then
+                    If Clear = True Then
+                        If Obj.BorderStyle = BorderStyle.Fixed3D Then
+                            CType(Obj, Label).BackColor = Color.WhiteSmoke
+                            ToolTip1.SetToolTip(Obj, "")
+                        End If
+                    Else
+                        If Val(Obj.AccessibleDescription) > 0 And Obj.text = "" Then
+                            If Obj.AccessibleDescription = "1" Then
+                                CollectMessage &= Replace(Replace(Obj.name, "lbl", "", 1, -1, CompareMethod.Text), "ID", "", 1, -1, CompareMethod.Text) & vbCrLf
+                                CType(Obj, Label).BackColor = Color.Salmon
+                                ToolTip1.SetToolTip(Obj, "Click the Edit Patient Information button to complete patient's information.")
+                            Else
+                                'If lblInsuranceCompanyID1.Text <> "" Or lblClaimAddress1.Text <> "" Then
+                                'CType(Obj, Label).BackColor = Color.Khaki
+                                'ToolTip1.SetToolTip(Obj, "Click the Edit Patient Information button to complete patient's information.")
+                                'End If
+                                CType(Obj, Label).BackColor = Color.Khaki
+                                ToolTip1.SetToolTip(Obj, "Click the Edit Patient Information button to complete patient's information.")
+                            End If
+                        End If
+                    End If
+                End If
+            Next
+        Next
+        TabPage1.ResumeLayout()
+        TabPage2.ResumeLayout(True)
+        'TabPage4.ResumeLayout()
+
+        Return CollectMessage
+    End Function
+
+    Private Sub Load_Parient_Bills()
+        Dim Reader As SqlClient.SqlDataReader
+        Dim SQL As String = ""
+        Dim ParentNode As TreeNode = Nothing
+        Dim ChildNode As TreeNode = Nothing
+        Dim DiagNode As TreeNode = Nothing
+        Dim Icn As String = ""
+        Dim SaveBillID As Long = 0
+        Dim SaveProcedureID As Long = 0
+        If ListViewPatients.SelectedItems.Count = 0 Then Exit Sub
+        SQL = "SELECT Bills.CaseTypeID, Bills.CopyFromBillID, Bills.SplitBillID, Bills.BillDate, Procedures.ProcName, PatientProcedures.PatientProcedureID, BillProcedures.BillID, Bills.BillAmount, Bills.BillStatusID, BillStatus.Description AS BillStatus, Diagnosis.ICDCode, Diagnosis.ICDDescription"
+        SQL &= " FROM Bills INNER JOIN BillProcedures ON Bills.BillID = BillProcedures.BillID INNER JOIN PatientProcedures INNER JOIN Procedures ON PatientProcedures.ProcID = Procedures.ProcID ON BillProcedures.PatientProcedureID = PatientProcedures.PatientProcedureID INNER JOIN BillStatus ON Bills.BillStatusID = BillStatus.BillStatusID INNER JOIN  BillDiagnosis ON BillProcedures.BillID = BillDiagnosis.BillID AND BillProcedures.PatientProcedureID = BillDiagnosis.PatientProcedureID INNER JOIN Diagnosis ON BillDiagnosis.DignosisID = Diagnosis.DignosisID "
+        SQL &= " WHERE PatientProcedures.PatientID = " & ListViewPatients.SelectedItems(0).Tag
+        SQL &= " ORDER BY Bills.BillID "
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then Exit Sub
+        TreeViewBills.Nodes.Clear()
+        Do Until Reader.Read = False
+            If SaveBillID <> Reader("BillID").ToString Then
+                SaveBillID = Reader("BillID").ToString
+                SaveProcedureID = 0
+                'Select Case Reader("BillStatusID").ToString
+                '    Case 1
+                '        Icn = "BILLED"
+                '    Case 2
+                '        Icn = "BILLED"
+                '    Case 3
+                '        Icn = "PAID"
+                '    Case 5, 6
+                '        Icn = "LITIGATION"
+                '    Case 8
+                '        Icn = "CANCELED"
+                '    Case Else
+                '        Icn = "DENIED"
+                'End Select
+                Icn = Reader("BillStatusID").ToString
+                If IsNumeric(Reader("CopyFromBillID").ToString) Then
+                    Icn = Icn & "1"
+                End If
+                ParentNode = TreeViewBills.Nodes.Add("K" & Reader("BillID").ToString, Reader("BillID").ToString & "      " & CDate(Reader("BillDate")).ToString("MM/dd/yyyy") & "      " & CDbl(Reader("BillAmount")).ToString("c"), Icn, Icn)
+                ParentNode.Checked = True
+                If Val(Reader("SplitBillID").ToString) > 0 Then
+                    ParentNode.ForeColor = Color.BlueViolet
+                End If
+                ParentNode.Tag = New ValueDescription(Reader("BillID").ToString, "", Val(Reader("SplitBillID").ToString), Val(Reader("CaseTypeID").ToString))
+                ParentNode.ToolTipText = "Bill Status: " & Reader("BillStatus").ToString
+            End If
+            If SaveProcedureID <> Reader("PatientProcedureID").ToString Then
+                SaveProcedureID = Reader("PatientProcedureID").ToString
+                ChildNode = ParentNode.Nodes.Add("", Reader("ProcName").ToString, "PROC", "PROC")
+                ChildNode.Tag = Reader("PatientProcedureID").ToString
+                TreeNode_SetStateImageIndex(ChildNode, 0)
+            End If
+            DiagNode = ChildNode.Nodes.Add("", Reader("ICDCode").ToString & "   " & Reader("ICDDescription").ToString, "DIAG", "DIAG")
+            TreeNode_SetStateImageIndex(DiagNode, 0)
+        Loop
+        Reader.Close() : Reader.Dispose()
+    End Sub
+
+    Private Sub Load_Documents(Optional ByVal DoNotSelect As Boolean = False)
+        Dim Reader As SqlClient.SqlDataReader
+        Dim LI As ListViewItem
+        Dim SQL As String
+
+        ListViewDocs.Items.Clear()
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            Exit Sub
+        End If
+        'SQL = "SELECT     DocumentID, PatientID, DocumentName, DocumentProfileID, InsertedDate FROM         Documents Where PatientID=" & ListViewPatients.SelectedItems(0).Tag & "Order by DocumentID"
+
+        SQL = "SELECT DocumentID, PatientID, DocumentName, DocumentProfileID, InsertedDate FROM Documents WHERE PatientID = " & ListViewPatients.SelectedItems(0).Tag & " and DocumentProfileID in (select ProfileID from DocumentProfileSecurityLevels where PositionID= " & gCurrentEmployee.PositionID & ") ORDER BY DocumentID"
+
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then Exit Sub
+        ListViewDocs.ListViewItemSorter = Nothing
+        Do Until Reader.Read = False
+            LI = ListViewDocs.Items.Add(Reader("DocumentName").ToString)
+            LI.SubItems.Add(FormatDateTime(Reader("InsertedDate").ToString, DateFormat.ShortDate))
+            LI.Tag = Reader("DocumentID").ToString
+            LI.SubItems(1).Tag = Val(Reader("DocumentProfileID").ToString)
+        Loop
+        ' POM's
+        If gSQLGetSingleValue("select count(*) from DocumentProfileSecurityLevels Where ProfileID=6 and PositionID=" & gCurrentEmployee.PositionID) > 0 Then
+            SQL = "SELECT  DISTINCT  Bills.BillID, POM.CreatedDT, POM.POMID FROM POM INNER JOIN Bills ON POM.POMID = Bills.POMID WHERE (POMImage IS NOT NULL) and Bills.PatientID = " & ListViewPatients.SelectedItems(0).Tag
+            Reader = gSQLGetDataReader(SQL)
+            If Reader Is Nothing Then Exit Sub
+            Do Until Reader.Read = False
+                LI = ListViewDocs.Items.Add("Bill# " & Reader("BillID").ToString & " POM")
+                LI.ForeColor = Color.Blue
+                LI.SubItems.Add(FormatDateTime(Reader("CreatedDT").ToString, DateFormat.ShortDate))
+                LI.Tag = Reader("POMID").ToString
+                LI.SubItems(1).Tag = 6
+            Loop
+        End If
+        ' CDPOM's
+        If gSQLGetSingleValue("select count(*) from DocumentProfileSecurityLevels Where ProfileID=18 and PositionID=" & gCurrentEmployee.PositionID) > 0 Then
+            SQL = "SELECT  ImageDiskRequests.BillID, CDPOM.POMID, CDPOM.CreatedDT, CDPOM.CreateBy, CDPOM.RegisteredDT, CDPOM.RegisteredBy, CDPOM.POMImage, CDPOM.TS FROM CDPOM INNER JOIN ImageDiskRequests ON CDPOM.POMID = ImageDiskRequests.POMID WHERE (POMImage IS NOT NULL) and ImageDiskRequests.PatientID = " & ListViewPatients.SelectedItems(0).Tag
+            Reader = gSQLGetDataReader(SQL)
+            If Reader Is Nothing Then Exit Sub
+            Do Until Reader.Read = False
+                LI = ListViewDocs.Items.Add("Bill# " & Reader("BillID").ToString & "CD POM")
+                LI.ForeColor = Color.Blue
+                LI.SubItems.Add(FormatDateTime(Reader("CreatedDT").ToString, DateFormat.ShortDate))
+                LI.Tag = Reader("POMID").ToString
+                LI.SubItems(1).Tag = 18
+            Loop
+        End If
+
+        If ListViewDocs.Items.Count > 0 And DoNotSelect = False Then
+            On Error GoTo er
+            ListViewDocs.Items(0).Selected = True
+            ListViewDocs.Items(0).EnsureVisible()
+            ListViewDocs_SelectedIndexChanged(Nothing, Nothing)
+
+        End If
+er:
+
+    End Sub
+
+    Private Sub Load_DocumentsBack(Optional ByVal DoNotSelect As Boolean = False)
+        Dim Reader As SqlClient.SqlDataReader
+        Dim LI As ListViewItem
+        Dim SQL As String
+
+        ListViewDocs.Items.Clear()
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            Exit Sub
+        End If
+        SQL = "SELECT     DocumentID, PatientID, DocumentName, DocumentProfileID, InsertedDate FROM         Documents Where PatientID=" & ListViewPatients.SelectedItems(0).Tag & "Order by DocumentID"
+
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then Exit Sub
+        Do Until Reader.Read = False
+            LI = ListViewDocs.Items.Add(Reader("DocumentName").ToString)
+            LI.SubItems.Add(FormatDateTime(Reader("InsertedDate").ToString, DateFormat.ShortDate))
+            LI.Tag = Reader("DocumentID").ToString
+            LI.SubItems(1).Tag = Val(Reader("DocumentProfileID").ToString)
+        Loop
+
+        SQL = "SELECT  DISTINCT  Bills.BillID, POM.CreatedDT, POM.POMID FROM POM INNER JOIN Bills ON POM.POMID = Bills.POMID WHERE (POMImage IS NOT NULL) and Bills.PatientID = " & ListViewPatients.SelectedItems(0).Tag
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then Exit Sub
+        Do Until Reader.Read = False
+            LI = ListViewDocs.Items.Add("Bill# " & Reader("BillID").ToString & " POM")
+            LI.ForeColor = Color.Blue
+            LI.SubItems.Add(FormatDateTime(Reader("CreatedDT").ToString, DateFormat.ShortDate))
+            LI.Tag = Reader("POMID").ToString
+            LI.SubItems(1).Tag = 6
+        Loop
+
+        SQL = "SELECT  ImageDiskRequests.BillID, CDPOM.POMID, CDPOM.CreatedDT, CDPOM.CreateBy, CDPOM.RegisteredDT, CDPOM.RegisteredBy, CDPOM.POMImage, CDPOM.TS FROM CDPOM INNER JOIN ImageDiskRequests ON CDPOM.POMID = ImageDiskRequests.POMID WHERE (POMImage IS NOT NULL) and ImageDiskRequests.PatientID = " & ListViewPatients.SelectedItems(0).Tag
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then Exit Sub
+        Do Until Reader.Read = False
+            LI = ListViewDocs.Items.Add("Bill# " & Reader("BillID").ToString & "CD POM")
+            LI.ForeColor = Color.Blue
+            LI.SubItems.Add(FormatDateTime(Reader("CreatedDT").ToString, DateFormat.ShortDate))
+            LI.Tag = Reader("POMID").ToString
+            LI.SubItems(1).Tag = 18
+        Loop
+
+        If ListViewDocs.Items.Count > 0 And DoNotSelect = False Then
+            On Error GoTo er
+            ListViewDocs.Items(0).Selected = True
+            ListViewDocs.Items(0).EnsureVisible()
+            ListViewDocs_SelectedIndexChanged(Nothing, Nothing)
+
+        End If
+er:
+
+    End Sub
+
+    Private Sub Load_PatientProcedures()
+        Dim Reader As SqlClient.SqlDataReader
+        Dim LI As ListViewItem
+        Dim SQL As String
+        Dim SI As ListViewItem.ListViewSubItem
+        ListViewProcedures.Items.Clear()
+        ListViewDiagnosis.Items.Clear()
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            Exit Sub
+        End If
+        SQL = "SELECT Procedures.code, Bills.BillDate, BillProcedures.BillID, PatientProcedures.ProcedureStatusID, PatientProcedures.TreatingProviderID, Employees.Fname +' '+Employees.LName+' '+Employees.Alias as TrName, PatientProcedures.BillingProviderID, EmployeesBP.Fname +' '+EmployeesBP.LName +' '+ EmployeesBP.Alias +' '+ EmployeesBP.Alias as BpName, Schedule.ScheduleDateTime, PatientProcedures.ProcID, Procedures.ProcName, Procedures.ProcDescription , Procedures.NFCost, Procedures.WCCost, Procedures.PRCost, PatientProcedures.PatientProcedureID  "
+        SQL &= " FROM         PatientProcedures INNER JOIN Procedures ON PatientProcedures.ProcID = Procedures.ProcID LEFT OUTER JOIN Schedule ON PatientProcedures.ScheduleID = Schedule.ScheduleID "
+        SQL &= " LEFT OUTER JOIN PatientProcedureReadings ON PatientProcedures.PatientProcedureID = PatientProcedureReadings.PatientProcedureID "
+        SQL &= " LEFT OUTER JOIN BillProcedures ON PatientProcedures.PatientProcedureID = BillProcedures.PatientProcedureID "
+        ' Do not check replicated bills
+        SQL &= " and BillProcedures.BillID not in(select BillID from bills where Bills.BillStatusID=13 and Bills.PatientID = PatientID	)  "
+        SQL &= " LEFT OUTER JOIN Employees on PatientProcedures.TreatingProviderID = Employees.EmpID "
+        SQL &= " LEFT OUTER JOIN Bills on BillProcedures.BillID = Bills.BillID "
+        SQL &= " LEFT OUTER JOIN Employees EmployeesBP on PatientProcedures.BillingProviderID = EmployeesBP.EmpID "
+        'SQL &= " Where (PatientProcedures.ProcedureStatusID=2 Or PatientProcedures.ProcedureStatusID=1) And PatientProcedures.PatientID = " & ListViewPatients.SelectedItems(0).Tag
+        SQL &= " Where isnull(PatientProcedures.DoNotBillInd,0)=0 And (PatientProcedures.ProcedureStatusID=2) And PatientProcedures.PatientID = " & ListViewPatients.SelectedItems(0).Tag
+        SQL &= " ORDER BY Schedule.ScheduleDateTime, ProcedureStatusID DESC "
+1:
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then Exit Sub
+        ListViewProcedures.ListViewItemSorter = Nothing
+        Dim PriceFieldName As String
+        Do Until Reader.Read = False
+            If IsDate(Reader("ScheduleDateTime").ToString) Then
+                LI = ListViewProcedures.Items.Add(CDate(Reader("ScheduleDateTime").ToString).ToString("MM/dd/yyyy"), 0)
+            Else
+                LI = ListViewProcedures.Items.Add("", 0)
+            End If
+            LI.UseItemStyleForSubItems = True
+            LI.SubItems.Add(Reader("ProcName").ToString)
+            PriceFieldName = ""
+            Select Case CType(cboCaseType.SelectedItem, ValueDescription).Value
+                Case 2
+                    PriceFieldName = "WCCost"
+                Case 3, 4
+                    PriceFieldName = "PRCost"
+                Case Else
+                    ' Starting from October 1 2020 NY nofault charges by WC fee schedule.
+                    If Reader("ScheduleDateTime") > CDate("10/01/2020") And gOfficeTypeID = 1 Then
+                        PriceFieldName = "WCCost"
+                    Else
+                        PriceFieldName = "NFCost"
+                    End If
+
+            End Select
+
+            If IsNumeric(Reader(PriceFieldName).ToString) And Val(Reader(PriceFieldName).ToString) <> 0 Then
+                LI.SubItems.Add(CDbl(Reader(PriceFieldName).ToString).ToString("c"))
+            Else
+                LI.SubItems.Add("")
+                LI.ForeColor = Color.Red
+            End If
+            SI = LI.SubItems.Add(Reader("TrName").ToString)
+            SI.Tag = Val(Reader("TreatingProviderID").ToString)
+            LI.SubItems(0).Tag = Reader("PatientProcedureID").ToString
+            LI.Tag = Reader("ProcID").ToString
+            LI.ToolTipText = Reader("ProcDescription").ToString
+
+            If Val(Reader("BillID").ToString) > "0" Then
+                LI.SubItems.Add(Reader("BillID").ToString)
+                'LI.Tag = ""
+                'LI.Font = New Font(LI.Font, FontStyle.Strikeout)
+                LI.ImageIndex = 1
+                If IsDate(Reader("BillDate")) Then
+                    LI.ToolTipText = "Bill # " & Reader("BillID").ToString & " " & "Billed On: " & FormatDateTime(Reader("BillDate").ToString, 2)
+                    LI.SubItems.Add(FormatDateTime(Reader("BillDate").ToString, 2))
+                Else
+                    LI.ToolTipText = "Bill # " & Reader("BillID").ToString
+                    LI.SubItems.Add("")
+                End If
+            Else
+                LI.SubItems.Add("")
+                LI.SubItems.Add("")
+            End If
+            SI = LI.SubItems.Add(Reader("BpName").ToString)
+            SI.Tag = Val(Reader("BillingProviderID").ToString)
+            LI.SubItems(1).Tag = Val(Reader("PatientProcedureID").ToString)
+            SI = LI.SubItems.Add(Reader("code").ToString)
+            'End If
+        Loop
+        Reader.Close() : Reader.Dispose()
+        If ListViewProcedures.Items.Count > 0 Then
+            On Error Resume Next
+            ListViewProcedures.Items(0).Selected = True
+            ListViewProcedures.Items(0).EnsureVisible()
+        End If
+        ''''''''''''''''''''''''''''
+        Load_PatientProceduresAll()
+        ''''''''''''''''''''''''''''
+    End Sub
+
+    Private Sub Load_PatientProceduresAll()
+        Dim Reader As SqlClient.SqlDataReader
+        Dim LI As ListViewItem
+        Dim SQL As String
+        ListViewProceduresAll.Items.Clear()
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            Exit Sub
+        End If
+        SQL = "SELECT     PatientProcedures.ReferringDoctor, Schedule.ScheduleDateTime, PatientProcedures.ProcID, Procedures.ProcName, PatientProcedures.PatientProcedureID, PatientProcedures.ProcedureStatusID,  PatientProcedureStatuses.Description AS StatusDescription, Employees.Fname + ' ' + Employees.Lname+' '+Employees.Alias AS TRName, EmployeesBP.Fname + ' ' + EmployeesBP.Lname +' '+ EmployeesBP.Alias AS BPName, PatientProcedures.TreatingProviderID "
+        SQL = SQL & " FROM         PatientProcedures INNER JOIN Procedures ON PatientProcedures.ProcID = Procedures.ProcID INNER JOIN PatientProcedureStatuses ON PatientProcedures.ProcedureStatusID = PatientProcedureStatuses.ProcedureStatusID LEFT OUTER JOIN Employees ON PatientProcedures.TreatingProviderID = Employees.EmpID LEFT OUTER JOIN Schedule ON PatientProcedures.ScheduleID = Schedule.ScheduleID LEFT OUTER JOIN Employees EmployeesBP ON PatientProcedures.BillingProviderID = EmployeesBP.EmpID "
+        SQL = SQL & " Where PatientProcedureStatuses.ProcedureStatusID =1 AND PatientProcedures.PatientID = " & ListViewPatients.SelectedItems(0).Tag
+        SQL = SQL & " ORDER BY Schedule.ScheduleDateTime, PatientProcedures.PatientProcedureID "
+
+        Reader = gSQLGetDataReader(SQL)
+        ListViewProceduresAll.BeginUpdate()
+        If Reader Is Nothing Then Exit Sub
+        ListViewProceduresAll.ListViewItemSorter = Nothing
+        Do Until Reader.Read = False
+            If IsDate(Reader("ScheduleDateTime").ToString) Then
+                LI = ListViewProceduresAll.Items.Add(CDate(Reader("ScheduleDateTime").ToString).ToString("MM/dd/yyyy hh:mm"), CInt(Val(Reader("ProcedureStatusID").ToString)))
+            Else
+                LI = ListViewProceduresAll.Items.Add("", 0)
+            End If
+            LI.SubItems.Add(Reader("ProcName").ToString)
+            LI.SubItems(0).Tag = Reader("PatientProcedureID").ToString
+            LI.Tag = Reader("ProcID").ToString
+            LI.ToolTipText = Reader("StatusDescription").ToString
+
+            LI.SubItems.Add(Reader("BPName").ToString)
+            LI.SubItems.Add(Reader("TRName").ToString)
+            LI.SubItems(2).Tag = Reader("TreatingProviderID").ToString
+            If IsDate(Reader("ScheduleDateTime").ToString) Then
+                If CDate(FormatDateTime(Reader("ScheduleDateTime").ToString, 2)) < CDate(FormatDateTime(Now, 2)) And Val(Reader("ProcedureStatusID").ToString) = 1 Then
+                    LI.SubItems.Add("NoShow")
+                    LI.ForeColor = Color.Red
+                Else
+                    LI.SubItems.Add(Reader("StatusDescription").ToString)
+                End If
+            Else
+                LI.SubItems.Add(Reader("StatusDescription").ToString)
+            End If
+            LI.SubItems.Add(lblCaseStatusID.Text)
+
+        Loop
+        Reader.Close() : Reader.Dispose()
+        If ListViewProceduresAll.Items.Count > 0 Then
+            ListViewProceduresAll.Items(0).Selected = True
+            ListViewProceduresAll.Items(0).EnsureVisible()
+        End If
+        ListViewProceduresAll.EndUpdate()
+    End Sub
+
+    Private SkeepLoad As Boolean
+
+    Private Sub Load_Diagnosis()
+        Dim Reader As SqlClient.SqlDataReader
+        Dim LI As ListViewItem
+        Dim SQL As String
+        Dim ProcID As Long = 0
+        If SkeepLoad Then Exit Sub
+        ListViewDiagnosis.Items.Clear()
+        If ListViewProcedures.SelectedItems.Count = 0 Then
+            Exit Sub
+        End If
+        If ListViewProcedures.SelectedItems(0).SubItems(4).Text <> "" Then   ' Procedure already billed.
+            If ListViewDiagnosis.Enabled = True Then ListViewDiagnosis.Enabled = False
+            If ComboBoxDiagnosisFilter.Enabled = True Then ComboBoxDiagnosisFilter.Enabled = False
+            If TextBoxCode.Enabled = True Then TextBoxCode.Enabled = False
+            Exit Sub
+        End If
+        If ListViewDiagnosis.Enabled = False Then ListViewDiagnosis.Enabled = True
+        If ComboBoxDiagnosisFilter.Enabled = False Then ComboBoxDiagnosisFilter.Enabled = True
+        If TextBoxCode.Enabled = False Then TextBoxCode.Enabled = True
+        ProcID = ListViewProcedures.SelectedItems(0).Tag
+        If CType(ComboBoxDiagnosisFilter.SelectedItem, ValueDescription).Value1 = "T" Then
+            SQL = "SELECT DISTINCT Diagnosis.DignosisID ,  Diagnosis.ICDCode, Diagnosis.ICDDescription, Diagnosis.ICDGroup "
+            SQL &= " FROM         Diagnosis "
+            SQL &= " WHERE Diagnosis.DignosisID in (select DignosisID from BillingTemplateDiagnosis WHERE TemplateID = " & CType(ComboBoxDiagnosisFilter.SelectedItem, ValueDescription).Value & ")"
+        Else
+            SQL = "SELECT DISTINCT Diagnosis.DignosisID ,  Diagnosis.ICDCode, Diagnosis.ICDDescription, Diagnosis.ICDGroup "
+            SQL &= " FROM         ProcedureDiagnosis LEFT OUTER JOIN Procedures ON ProcedureDiagnosis.ProcID = Procedures.ProcID RIGHT OUTER JOIN Diagnosis ON ProcedureDiagnosis.DignosisID = Diagnosis.DignosisID "
+            SQL &= " WHERE Diagnosis.ActiveInd = 1 "
+            If TextBoxCode.Text.Trim <> "" Then
+                SQL &= " AND (Diagnosis.ICDCode like '" & TextBoxCode.Text.Trim.ToSafeSQLString() & "%' "
+                SQL &= " OR Diagnosis.ICDDescription like '" & TextBoxCode.Text.Trim.ToSafeSQLString() & "%' "
+                SQL &= " OR Procedures.ProcName like '" & TextBoxCode.Text.Trim.ToSafeSQLString() & "%' )"
+            End If
+
+            Select Case CType(ComboBoxDiagnosisFilter.SelectedItem, ValueDescription).Value
+                Case "-1" 'Show All
+                Case "-2" 'Filter By Procedure
+                    SQL &= " AND ProcedureDiagnosis.ProcID = " & ProcID & " "
+                Case "-3" 'Filter By Procedure Diagnostic
+                    SQL &= " AND Procedures.DiagID = (SELECT DiagID From Procedures Where ProcID = " & ListViewProcedures.SelectedItems(0).Tag & ")"
+                Case "-100"
+                    SQL &= " AND Diagnosis.ICDGroup = '" & ComboBoxDiagnosisFilter.Text.ToSafeSQLString() & "' "
+                Case Else
+                    SQL &= " AND Procedures.DiagID = " & CType(ComboBoxDiagnosisFilter.SelectedItem, ValueDescription).Value
+            End Select
+        End If
+
+        SQL &= SaveSortDiagnosis
+
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then Exit Sub
+        ListViewDiagnosis.ListViewItemSorter = Nothing
+        Dim lst As List(Of ListViewItem) = New List(Of ListViewItem)
+
+        Do Until Reader.Read = False
+            'LI = ListViewDiagnosis.Items.Add(Reader("ICDCode").ToString)
+            LI = New ListViewItem(Reader("ICDCode").ToString)
+            LI.SubItems.Add(Reader("ICDDescription").ToString)
+            LI.SubItems.Add(Reader("ICDGroup").ToString)
+            'LI.SubItems.Add(Reader("ProcName").ToString)
+            LI.Tag = Reader("DignosisID").ToString
+            LI.ToolTipText = Reader("ICDDescription").ToString
+            lst.Add(LI)
+        Loop
+        Reader.Close() : Reader.Dispose()
+        ListViewDiagnosis.BeginUpdate()
+        ListViewDiagnosis.Items.AddRange(lst.ToArray)
+        If ListViewDiagnosis.Items.Count > 0 Then
+            ListViewDiagnosis.Items(0).Selected = True
+            ListViewDiagnosis.Items(0).EnsureVisible()
+        End If
+        ListViewDiagnosis.EndUpdate()
+        gListViewRestoreDefaultColumnWidth(ListViewDiagnosis)
+    End Sub
+
+    Private Sub TextBoxSearch_TextChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles TextBoxSearch.TextChanged
+        Dim LI As ListViewItem = Nothing
+        If ListViewPatients.Items.Count = 0 Then
+            TextBoxSearch.Text = ""
+            Exit Sub
+        End If
+        If TextBoxSearch.Text = "" And ListViewPatients.Items.Count > 0 Then
+            ListViewPatients.Items(0).Selected = True
+            ListViewPatients.Items(0).EnsureVisible()
+            TextBoxSearch.Focus()
+            TextBoxSearch.SelectionStart = TextBoxSearch.Text.Length
+            Exit Sub
+        End If
+        'LI = ListView1.FindItemWithText(TextBox1.Text)
+        Dim LIs As ListViewItem
+        For Each LIs In ListViewPatients.Items
+            If Not LIs Is Nothing Then
+                If InStr(LIs.Text, TextBoxSearch.Text, CompareMethod.Text) > 0 Or InStr(LIs.SubItems(1).Text, TextBoxSearch.Text, CompareMethod.Text) > 0 Or InStr(LIs.SubItems(1).Tag, TextBoxSearch.Text, CompareMethod.Text) > 0 Then
+                    LI = LIs
+                    Exit For
+                End If
+            End If
+        Next
+        If Not LI Is Nothing Then
+            LI.Selected = True
+            LI.EnsureVisible()
+        Else
+            'ListView1.Items(0).Selected = True
+            'ListView1.Items(0).EnsureVisible()
+            TextBoxSearch.BackColor = Color.LightCoral
+            TextBoxSearch.Text = TextBoxSearch.Text.Mid(1, TextBoxSearch.Text.Length - 1)
+            Beep()
+            Timer2.Enabled = True
+        End If
+        TextBoxSearch.Focus()
+        TextBoxSearch.SelectionStart = TextBoxSearch.Text.Length
+    End Sub
+
+    Private Sub ListViewProcedures_ColumnClick(ByVal sender As Object, ByVal e As System.Windows.Forms.ColumnClickEventArgs) Handles ListViewProcedures.ColumnClick
+        Dim new_sorting_column As ColumnHeader = ListViewProcedures.Columns(e.Column)
+        ' Figure out the new sorting order.
+        Dim sort_order As System.Windows.Forms.SortOrder
+        If p_SortingColumn Is Nothing Then
+            ' New column. Sort ascending.
+            sort_order = SortOrder.Ascending
+        Else
+            ' See if this is the same column.
+            If new_sorting_column.Equals(p_SortingColumn) Then
+                ' Same column. Switch the sort order.
+
+                'If p_SortingColumn.Text.StartsWith("> ") Then
+                'sort_order = SortOrder.Descending
+                'Else
+                'sort_order = SortOrder.Ascending
+                'End If
+                If p_SortingColumn.ImageKey = "SORT1" Then
+                    sort_order = SortOrder.Descending
+                Else
+                    sort_order = SortOrder.Ascending
+                End If
+            Else
+                ' New column. Sort ascending.
+                sort_order = SortOrder.Ascending
+            End If
+
+            ' Remove the old sort indicator.
+            'p_SortingColumn.Text =             p_SortingColumn.Text.Mid(2)
+            p_SortingColumn.ImageKey = "SORT0"
+        End If
+
+        ' Display the new sort order.
+        p_SortingColumn = new_sorting_column
+        'If sort_order = SortOrder.Ascending Then
+        'p_SortingColumn.Text = "> " & p_SortingColumn.Text
+        'Else
+        'p_SortingColumn.Text = "< " & p_SortingColumn.Text
+        'End If
+        If sort_order = SortOrder.Ascending Then
+            p_SortingColumn.ImageKey = "SORT1"
+        Else
+            p_SortingColumn.ImageKey = "SORT2"
+        End If
+
+        ' Create a comparer.
+        ListViewProcedures.ListViewItemSorter = New _
+            ListViewComparer(e.Column, sort_order)
+
+        ' Sort.
+        ListViewProcedures.Sort()
+    End Sub
+
+    Private Sub ListViewProcedures_ItemCheck(ByVal sender As Object, ByVal e As System.Windows.Forms.ItemCheckEventArgs) Handles ListViewProcedures.ItemCheck
+        ListViewProcedures.Items(e.Index).Selected = True
+        ListViewProcedures.Items(e.Index).EnsureVisible()
+    End Sub
+
+    Private Sub ComboBoxDiagnosisFilter_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ComboBoxDiagnosisFilter.SelectedIndexChanged
+        If ComboBoxDiagnosisFilter.SelectedIndex = -1 Then Exit Sub
+        If CType(ComboBoxDiagnosisFilter.SelectedItem, ValueDescription).Value = "-99" Then
+            ComboBoxDiagnosisFilter.SelectedIndex = 1
+        End If
+        If Loading = False Then
+            Load_Diagnosis()
+        End If
+    End Sub
+
+    Private ValidationFailed As Boolean
+
+    Private Sub TextBoxCode_TextChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles TextBoxCode.TextChanged
+        If Loading = False Then
+            Load_Diagnosis()
+        End If
+    End Sub
+
+    Private Sub cmdAddNew_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdAddNew.Click
+        Dim Ret As String
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            MsgBox("Unable to create bill. No patient selected.", MsgBoxStyle.Information)
+            ValidationFailed = True
+            Exit Sub
+        End If
+        Ret = Validate_Billing_Data()
+        If Ret <> "" Then
+            TabControl1.SelectedIndex = 0
+            MsgBox("Unable to create bill. The following information missing:" & vbCrLf & vbCrLf & Ret & vbCrLf & "Please click the Edit Patient Information button and fix the problem(s).", MsgBoxStyle.Information)
+            ValidationFailed = True
+            Exit Sub
+        End If
+        If ListViewProcedures.SelectedItems.Count = 0 Then
+            MsgBox("Unable to create bill. No procedure selected.", MsgBoxStyle.Information)
+            ValidationFailed = True
+            Exit Sub
+        End If
+        TabControl1.SelectedIndex = 1
+        OpMode = AddEditMode.AddNew
+        Enable_Controls(True)
+    End Sub
+
+    Private Sub TextBoxDescription_TextChanged(ByVal sender As System.Object, ByVal e As System.EventArgs)
+        If Loading = False Then
+            Load_Diagnosis()
+        End If
+    End Sub
+
+    Private Sub ListViewDiagnosis_ColumnClick(ByVal sender As Object, ByVal e As System.Windows.Forms.ColumnClickEventArgs) Handles ListViewDiagnosis.ColumnClick
+        Dim new_sorting_column As ColumnHeader = ListViewDiagnosis.Columns(e.Column)
+        ' Figure out the new sorting order.
+        Dim sort_order As System.Windows.Forms.SortOrder
+        If d_SortingColumn Is Nothing Then
+            ' New column. Sort ascending.
+            sort_order = SortOrder.Ascending
+        Else
+            ' See if this is the same column.
+            If new_sorting_column.Equals(d_SortingColumn) Then
+                ' Same column. Switch the sort order.
+
+                'If d_SortingColumn.Text.StartsWith("> ") Then
+                'sort_order = SortOrder.Descending
+                'Else
+                'sort_order = SortOrder.Ascending
+                'End If
+                If d_SortingColumn.ImageKey = "SORT1" Then
+                    sort_order = SortOrder.Descending
+                Else
+                    sort_order = SortOrder.Ascending
+                End If
+            Else
+                ' New column. Sort ascending.
+                sort_order = SortOrder.Ascending
+            End If
+
+            ' Remove the old sort indicator.
+            'd_SortingColumn.Text =             d_SortingColumn.Text.Mid(2)
+            d_SortingColumn.ImageKey = "SORT0"
+        End If
+
+        ' Display the new sort order.
+        d_SortingColumn = new_sorting_column
+        'If sort_order = SortOrder.Ascending Then
+        'd_SortingColumn.Text = "> " & d_SortingColumn.Text
+        'Else
+        'd_SortingColumn.Text = "< " & d_SortingColumn.Text
+        'End If
+        If sort_order = SortOrder.Ascending Then
+            d_SortingColumn.ImageKey = "SORT1"
+        Else
+            d_SortingColumn.ImageKey = "SORT2"
+        End If
+
+        ' Create a comparer.
+        ListViewDiagnosis.ListViewItemSorter = New _
+            ListViewComparer(e.Column, sort_order)
+
+        ' Sort.
+        ListViewDiagnosis.Sort()
+
+        Select Case e.Column
+            Case 0
+                SaveSortDiagnosis = "ORDER BY ICDCode "
+            Case 1
+                SaveSortDiagnosis = "ORDER BY ICDDescription "
+            Case 2
+                SaveSortDiagnosis = "ORDER BY ICDGroup "
+            Case 3
+                SaveSortDiagnosis = "ORDER BY ProcName "
+        End Select
+        If sort_order = SortOrder.Ascending Then
+            SaveSortDiagnosis &= " ASC "
+        ElseIf sort_order = SortOrder.Descending Then
+            SaveSortDiagnosis &= " DESC "
+        End If
+
+    End Sub
+
+    Private Function Validate_TreatingProvider(ByVal TrID As Long) As String
+        Validate_TreatingProvider = ""
+        Dim LI As TreeNode = Nothing
+        For Each LI In TreeViewBill.Nodes
+            If LI.Parent Is Nothing Then
+                If CType(LI.Tag, ValueDescription).Fld1 <> TrID Then
+                    Validate_TreatingProvider = CType(LI.Tag, ValueDescription).Fld2
+
+                End If
+            End If
+        Next
+    End Function
+
+    Private Function Validate_BillingProvider(ByVal BpID As Long) As String
+        Validate_BillingProvider = ""
+        Dim LI As TreeNode = Nothing
+        For Each LI In TreeViewBill.Nodes
+            If LI.Parent Is Nothing Then
+                If CType(LI.Tag, ValueDescription).Fld3 <> BpID Then
+                    Validate_BillingProvider = CType(LI.Tag, ValueDescription).Fld4
+
+                End If
+            End If
+        Next
+    End Function
+
+    Private BPID As Long
+    Private BPNAME As String
+    Private TRPID As Long
+    Private TRPNAME As String
+
+    Private Sub ListViewDiagnosis_DoubleClick(ByVal sender As Object, ByVal e As System.EventArgs) Handles ListViewDiagnosis.DoubleClick
+        Dim SearchN As TreeNode()
+        Dim ChildSearchN As TreeNode()
+        Dim ParentN As TreeNode = Nothing
+        Dim ChildN As TreeNode = Nothing
+        Dim N As TreeNode = Nothing
+        If ListViewProcedures.SelectedItems(0).SubItems(2).Text = "" Then
+            MsgBox("Unable to bill the current procedure." & vbCrLf & vbCrLf & "No " & cboCaseType.Text & " Price set for  the " & ListViewProcedures.SelectedItems(0).SubItems(1).Text & vbCrLf & vbCrLf & vbCrLf & "Please call the system administrator.", MsgBoxStyle.Critical)
+            Exit Sub
+        End If
+        If TreeViewBill.Nodes.Count = 0 Then
+            TRPID = (ListViewProcedures.SelectedItems(0).SubItems(3).Tag)
+            TRPNAME = ListViewProcedures.SelectedItems(0).SubItems(3).Text
+            BPID = Val(ListViewProcedures.SelectedItems(0).SubItems(6).Tag)
+            BPNAME = ListViewProcedures.SelectedItems(0).SubItems(6).Text
+        End If
+        Dim Ret As String = Validate_Billing_Data()
+        If Ret <> "" Then
+            Dim ElectrinicFilingMsg As String = " is missing "
+            TabControl1.SelectedIndex = 0
+            If gEnableElectronicBillFiling > 0 Then
+                If Val(lblCaseTypeID.Tag) = 2 Then
+                    ElectrinicFilingMsg = " is required for E-Filing "
+                End If
+            End If
+            MsgBox("Unable to create bill." & vbCrLf & "The following information " & ElectrinicFilingMsg & ":" & vbCrLf & vbCrLf & Ret & vbCrLf & "Please click the Edit Patient Information button and fix the problem(s).", MsgBoxStyle.Information)
+            Exit Sub
+        End If
+        Ret = ""
+        'Ret = Validate_BillingProvider(Val(ListViewProcedures.SelectedItems(0).SubItems(6).Tag))
+        'If Ret <> "" Then
+        '    MsgBox("Unable to add procedure to the bill. The current bill is already contains procedure(s) for the Billing Provider:   " & Ret & vbCrLf & vbCrLf & "Only one Billing Provider allowed per bill.", MsgBoxStyle.Information)
+        '    Exit Sub
+        'End If
+        'Ret = Validate_TreatingProvider(Val(ListViewProcedures.SelectedItems(0).SubItems(3).Tag))
+        'If Ret <> "" Then
+        '    MsgBox("Unable to add procedure to the bill. The current bill is already contains procedure(s) for the Treationg Provider:   " & Ret & vbCrLf & vbCrLf & "Only one Treating Provider allowed per bill.", MsgBoxStyle.Information)
+        '    Exit Sub
+        'End If
+        If BPID <> Val(ListViewProcedures.SelectedItems(0).SubItems(6).Tag) Then
+            MsgBox("Unable to add procedure to the bill. The current bill is already contains procedure(s) for the Billing Provider:   " & BPNAME & vbCrLf & vbCrLf & "Only one Billing Provider allowed per bill.", MsgBoxStyle.Information)
+            Exit Sub
+        End If
+        If gOfficeTypeID = 1 Or gOfficeTypeID = 3 Then
+            If TRPID <> Val(ListViewProcedures.SelectedItems(0).SubItems(3).Tag) Then
+                MsgBox("Unable to add procedure to the bill. The current bill is already contains procedure(s) for the Treating Provider:   " & TRPNAME & vbCrLf & vbCrLf & "Only one Treating Provider allowed per bill.", MsgBoxStyle.Information)
+                Exit Sub
+            End If
+        End If
+        ValidationFailed = False
+        If OpMode = AddEditMode.None Then cmdAddNew_Click(Nothing, Nothing)
+        If ValidationFailed Then Exit Sub
+        If ListViewDiagnosis.SelectedItems.Count = 0 Then Exit Sub
+        If ListViewProcedures.SelectedItems.Count = 0 Then Exit Sub
+        SearchN = TreeViewBill.Nodes.Find("K" & ListViewProcedures.SelectedItems(0).Tag, False)
+
+        If SearchN.Length = 0 Then
+            ParentN = TreeViewBill.Nodes.Add("K" & ListViewProcedures.SelectedItems(0).Tag, "", "PROC", "PROC")
+            'ParentN.NodeFont = New Font(TreeViewBill.Font, FontStyle.Bold)
+            ParentN.Text = ListViewProcedures.SelectedItems(0).SubItems(1).Text & "    /    " & ListViewProcedures.SelectedItems(0).Text & "    /    " & ListViewProcedures.SelectedItems(0).SubItems(2).Text & "    /    BP: " & ListViewProcedures.SelectedItems(0).SubItems(6).Text & "    /    TRP: " & ListViewProcedures.SelectedItems(0).SubItems(3).Text
+            ParentN.Tag = New ValueDescription(ListViewProcedures.SelectedItems(0).Tag, ListViewProcedures.SelectedItems(0).SubItems(2).Text, ListViewProcedures.SelectedItems(0).SubItems(0).Tag, Val(ListViewProcedures.SelectedItems(0).SubItems(3).Tag), ListViewProcedures.SelectedItems(0).SubItems(3).Text, Val(ListViewProcedures.SelectedItems(0).SubItems(6).Tag), ListViewProcedures.SelectedItems(0).SubItems(6).Text)
+            ChildN = ParentN.Nodes.Add("K" & ListViewDiagnosis.SelectedItems(0).Tag, ListViewDiagnosis.SelectedItems(0).Text & "  " & ListViewDiagnosis.SelectedItems(0).SubItems(1).Text, "DIAG", "DIAG")
+            ChildN.Tag = ListViewDiagnosis.SelectedItems(0).Tag
+        Else
+            ParentN = SearchN(0)
+            ChildSearchN = ParentN.Nodes.Find("K" & ListViewDiagnosis.SelectedItems(0).Tag, True)
+            If ChildSearchN.Length > 0 Then
+                ChildSearchN(0).Parent.Expand()
+                TreeViewBill.SelectedNode = ChildSearchN(0)
+                MsgBox("Duplicate diagnose within the same procedure.", MsgBoxStyle.Exclamation)
+                Exit Sub
+            End If
+            ChildN = ParentN.Nodes.Add("K" & ListViewDiagnosis.SelectedItems(0).Tag, ListViewDiagnosis.SelectedItems(0).Text & "  " & ListViewDiagnosis.SelectedItems(0).SubItems(1).Text, "DIAG", "DIAG")
+            ChildN.Tag = ListViewDiagnosis.SelectedItems(0).Tag
+        End If
+        ParentN.Expand()
+        ParentN.EnsureVisible()
+        ChildN.EnsureVisible()
+        TreeViewBill.SelectedNode = ChildN
+        Calculate_BillTotoals()
+    End Sub
+
+    Private Sub ListViewDocs_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ListViewDocs.SelectedIndexChanged
+        Dim Reader As SqlClient.SqlDataReader
+        Dim SQL As String
+        Dim MyFile As IO.FileInfo
+        gHighlightListviewItem(ListViewDocs, True, False)
+        If ListViewDocs.SelectedItems.Count = 0 Then
+            lblFileSize.Text = ""
+            pdfViewer.CloseDocument()
+            Exit Sub
+        End If
+        Select Case Val(ListViewDocs.SelectedItems(0).SubItems(1).Tag)
+
+            Case 6
+                Reader = gSQLGetDataReader("SELECT POMImage FROM POM where POMID=" & Val(ListViewDocs.SelectedItems(0).Tag))
+                If Reader Is Nothing Then
+                    MsgBox("Unexpected error. Please call system administrator.", MsgBoxStyle.Critical)
+                    Exit Sub
+                End If
+                If Reader.HasRows Then
+                    Cursor = Cursors.WaitCursor
+                    Reader.Read()
+                    If Reader("POMImage") Is DBNull.Value Then
+                        MsgBox("Unexpected Error." & vbCrLf & "The POM image is invalid or damaged." & vbCrLf & "Please ReScan the document." & vbCrLf & vbCrLf & "The current/invalid document image will be deleted.", MsgBoxStyle.Exclamation)
+                        ListViewDocs.SelectedItems(0).Remove()
+                        pdfViewer.CloseDocument()
+                        pdfViewer.Visible = True
+                        lblFileSize.Text = ""
+                        Cursor = Cursors.Default
+                        Exit Sub
+                    End If
+                    Dim arrayImage() As Byte = CType(Reader("POMImage"), Byte())
+                    Dim FName As String = gSQLWriteFileFromArray(arrayImage, "PDF", ListViewDocs.SelectedItems(0).Text)
+                    If System.IO.File.Exists(FName) Then
+                        pdfViewer.Visible = True
+                        pdfViewer.LoadDocument(FName)
+                        pdfViewer.Tag = FName
+                        MyFile = New IO.FileInfo(FName)
+                        lblFileSize.Text = "Document Size: " & gFormatFileSize(MyFile.Length)
+                        'pdfViewer.Visible = True
+                        TimerPdfRefresh.Enabled = True
+                        Cursor = Cursors.Default
+                    End If
+                Else
+                    MsgBox("Unexpected error. No POM Image Found. Please call system administrator.", MsgBoxStyle.Critical)
+                    Exit Sub
+                End If
+            Case 18
+                Reader = gSQLGetDataReader("SELECT POMImage FROM CDPOM where POMID=" & Val(ListViewDocs.SelectedItems(0).Tag))
+                If Reader Is Nothing Then
+                    MsgBox("Unexpected error. Please call system administrator.", MsgBoxStyle.Critical)
+                    Exit Sub
+                End If
+                If Reader.HasRows Then
+                    Cursor = Cursors.WaitCursor
+                    Reader.Read()
+                    If Reader("POMImage") Is DBNull.Value Then
+                        MsgBox("Unexpected Error. The CD POM image is invalid or damaged. Please ReScan the document." & vbCrLf & vbCrLf & "The current/invalid document image will be deleted.")
+                        gSQLUpdateData("DELETE FROM CDPOM where (POMImage IS NULL) and POMID=" & Val(ListViewDocs.SelectedItems(0).Tag))
+                        ListViewDocs.SelectedItems(0).Remove()
+                        pdfViewer.CloseDocument()
+                        pdfViewer.Visible = True
+                        lblFileSize.Text = ""
+                        Cursor = Cursors.Default
+                        Exit Sub
+                    End If
+                    Dim arrayImage() As Byte = CType(Reader("POMImage"), Byte())
+                    Dim FName As String = gSQLWriteFileFromArray(arrayImage, "PDF", ListViewDocs.SelectedItems(0).Text)
+                    If System.IO.File.Exists(FName) Then
+                        pdfViewer.Visible = True
+                        pdfViewer.LoadDocument(FName)
+                        pdfViewer.Tag = FName
+                        MyFile = New IO.FileInfo(FName)
+                        lblFileSize.Text = "Document Size: " & gFormatFileSize(MyFile.Length)
+                        'pdfViewer.Visible = True
+                        TimerPdfRefresh.Enabled = True
+                        Cursor = Cursors.Default
+                    End If
+                Else
+                    MsgBox("Unexpected error. No POM Image Found. Please call system administrator.", MsgBoxStyle.Critical)
+                    Exit Sub
+                End If
+
+            Case Else
+                SQL = "SELECT DocumentImage   FROM         Documents Where DocumentID=" & ListViewDocs.SelectedItems(0).Tag
+                Reader = gSQLGetDataReader(SQL)
+                If Reader Is Nothing Then Exit Sub
+                If Reader.HasRows Then
+                    Cursor = Cursors.WaitCursor
+                    Reader.Read()
+                    If Reader("DocumentImage") Is DBNull.Value Then
+                        MsgBox("Unexpected Error. The Document image is invalid or damaged. Please ReScan the document." & vbCrLf & vbCrLf & "The current/invalid document image will be deleted.")
+                        gSQLUpdateData("DELETE FROM Documents where DocumentID=" & Val(ListViewDocs.SelectedItems(0).Tag))
+                        ListViewDocs.SelectedItems(0).Remove()
+                        pdfViewer.CloseDocument()
+                        pdfViewer.Visible = True
+                        Cursor = Cursors.Default
+                        lblFileSize.Text = ""
+                    Else
+                        Dim arrayImage() As Byte = CType(Reader("DocumentImage"), Byte())
+                        Dim FName As String = gSQLWriteFileFromArray(arrayImage, "PDF", ListViewDocs.SelectedItems(0).Text)
+                        If System.IO.File.Exists(FName) Then
+                            pdfViewer.Visible = True
+                            pdfViewer.LoadDocument(FName)
+                            pdfViewer.Tag = FName
+                            MyFile = New IO.FileInfo(FName)
+                            lblFileSize.Text = "Document Size: " & gFormatFileSize(MyFile.Length)
+                            TimerPdfRefresh.Enabled = True
+                        End If
+                    End If
+                End If
+        End Select
+        Cursor = Cursors.Default
+    End Sub
+
+    Private Sub ToolStripButtonDeleteDocument_Click(ByVal sender As System.Object, ByVal e As System.EventArgs)
+        Dim LI As ListViewItem
+        Dim Sql As String
+        Dim ApprovedByID As Long
+        Dim ApprovedByName As String
+
+        If ListViewDocs.SelectedItems.Count = 0 Then
+            Exit Sub
+        End If
+        LI = ListViewDocs.SelectedItems(0)
+        If gCurrentEmployee.PositionID > 3 Then
+            frmSupervisorApproval.LabelMsg.Text = "Delete Document: " & LI.Text
+            If frmSupervisorApproval.ShowDialog <> Windows.Forms.DialogResult.OK Then
+                frmSupervisorApproval.Dispose()
+                Exit Sub
+            End If
+            ApprovedByID = frmSupervisorApproval.SupervisorID
+            ApprovedByName = frmSupervisorApproval.SupervisorName
+            frmSupervisorApproval.Dispose()
+        Else
+            If MsgBox("Please confirm you want to delete " & LI.Text & "?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo, "Supervisor Approval") = MsgBoxResult.No Then
+                Exit Sub
+            End If
+            ApprovedByID = gCurrentEmployee.EmpID
+            ApprovedByName = gCurrentEmployee.FName & " " & gCurrentEmployee.LName
+        End If
+        gUpdate_Profile_Log(ListViewPatients.SelectedItems(0).Tag, PatientLogTypes.tDocumentDeleted, LI.Text, ApprovedByName)
+        Sql = "DELETE FROM Documents Where DocumentID=" & LI.Tag
+        gSQLDeleteRecord(Sql)
+        Dim SaveIndex As Integer = LI.Index
+        ListViewDocs.Items.Remove(LI)
+        pdfViewer.CloseDocument()
+        If ListViewDocs.Items.Count > 0 Then
+            If ListViewDocs.Items.Count > SaveIndex Then
+                ListViewDocs.Items(SaveIndex).Selected = True
+                ListViewDocs.Items(SaveIndex).EnsureVisible()
+            Else
+                ListViewDocs.Items(SaveIndex - 1).Selected = True
+                ListViewDocs.Items(SaveIndex - 1).EnsureVisible()
+            End If
+        End If
+
+    End Sub
+
+    Private Sub TabControl1_SelectedIndexChanged(ByVal sender As Object, ByVal e As System.EventArgs) Handles TabControl1.SelectedIndexChanged
+        LoadingDetails = True
+        If TabControl1.SelectedIndex = 1 Then
+            ListViewDocs.Focus()
+        End If
+        If TabControl1.SelectedIndex = 2 And Val(TabPage3.Tag) = 0 Then
+            TabPage3.Tag = 1
+            Load_Documents(True)
+        End If
+        If TabControl1.SelectedIndex = 1 And Val(TabPage2.Tag) = 0 And cmdUpdate.Enabled = False Then
+            TabPage2.Tag = 1
+            Load_PatientProcedures()
+        End If
+        LoadingDetails = False
+    End Sub
+
+    Private Sub TimerPdfRefresh_Tick(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles TimerPdfRefresh.Tick
+        TimerPdfRefresh.Enabled = False
+        pdfViewer.Visible = True
+        pdfViewer.Show()
+        pdfViewer.BringToFront()
+        pdfViewer.Update()
+    End Sub
+
+    Private Sub ToolStripButtonSaveAs_Click(ByVal sender As System.Object, ByVal e As System.EventArgs)
+        Dim Fname As String
+        If ListViewDocs.SelectedItems.Count = 0 Then
+            MsgBox("Unable to save. No document selected.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+
+        If System.IO.File.Exists(pdfViewer.Tag) = False Then
+            MsgBox("Unexpected Error. Unable to save file. Please select a document and try again.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        If pdfViewer.Tag.ToString().Right(3).ToUpper() = "PDF" Then
+            SaveFileDialog1.Filter = "Adobe Acrobat File (*.pdf)|*.pdf"
+            SaveFileDialog1.DefaultExt = "pdf"
+            Fname = ListViewDocs.SelectedItems(0).Text & ".pdf"
+        Else
+            SaveFileDialog1.Filter = "JPEG FIle (*.jpg)|*.jpg"
+            SaveFileDialog1.DefaultExt = "jpg"
+            Fname = ListViewDocs.SelectedItems(0).Text & ".jpg"
+        End If
+        Fname = gFixFileName(Fname)
+        SaveFileDialog1.FileName = Fname
+        If SaveFileDialog1.ShowDialog = Windows.Forms.DialogResult.OK Then
+            Try
+                If pdfViewer.Tag.ToString().Right(3).ToUpper() = "PDF" Then
+                    IO.File.Copy(pdfViewer.Tag, SaveFileDialog1.FileName)
+                Else
+                    Image.FromFile(pdfViewer.Tag).Save(SaveFileDialog1.FileName)
+                End If
+            Catch ex As Exception
+                TopMost = False
+                MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+                log.Error(ex.Message, ex)
+
+            End Try
+
+            Dim P As New ProcessStartInfo()
+            With P
+                .FileName = SaveFileDialog1.FileName
+                .UseShellExecute = True
+            End With
+            Process.Start(P)
+        End If
+    End Sub
+
+    Private Sub ToolStripButtonEmail_Click(ByVal sender As System.Object, ByVal e As System.EventArgs)
+        Dim MessageFrom As String = gOfficeEmail
+        Dim Msg As New SendFileTo
+        Dim Subject As String
+        If ListViewDocs.SelectedItems.Count = 0 Then
+            MsgBox("Unable to send email. No document selected.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        If ListViewPatients.SelectedItems.Count > 0 Then
+            Subject = "Message From " & gOfficeName & " / Patient: " & ListViewPatients.SelectedItems(0).SubItems(1).Text
+        Else
+            Subject = "Message From " & gOfficeName
+        End If
+        If ListViewDocs.SelectedItems.Count > 0 Then
+            Subject &= " / Attached: " & ListViewDocs.SelectedItems(0).Text
+        End If
+
+        Try
+            Msg.SendMail(pdfViewer.Tag.ToString, Subject, Subject)
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+
+        End Try
+
+    End Sub
+
+    Private Sub cboCaseType_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cboCaseType.SelectedIndexChanged
+        If cboCaseType.SelectedIndex = -1 Then Exit Sub
+        LockWindowUpdate(Me.Handle)
+        If CType(cboCaseType.SelectedItem, ValueDescription).Value = 1 Then
+            ComboBoxBillingDays.Enabled = True
+        Else
+            ComboBoxBillingDays.Enabled = False
+        End If
+        ComboBoxBillingDays.Visible = ComboBoxBillingDays.Enabled
+        Label42.Visible = ComboBoxBillingDays.Enabled
+        Button2.Visible = ComboBoxBillingDays.Enabled
+
+        If CType(cboCaseType.SelectedItem, ValueDescription).Value = 3 Then
+            If PanelTotals.Visible = False Then
+                PanelTotals.Visible = True
+                PanelTotals.SendToBack()
+            End If
+        Else
+            PanelTotals.Visible = False
+        End If
+        LockWindowUpdate(0)
+        ''''''''''''''''''
+        cboInsuranceCompanyID.Items.Clear()
+        cboInsuranceCompanyID.Items.Add(New ValueDescription(0, "All"))
+        cboInsuranceCompanyID.Items.Add(New ValueDescription(-1, "-----------------------------------------INSURANCE GROUPS-----------------------------------------"))
+        cboInsuranceCompanyID.SelectedIndex = 0
+        cboInsuranceCompanyID.DropDownHeight = 106
+        Dim Reader As SqlClient.SqlDataReader
+        Cursor = Cursors.WaitCursor
+        Application.DoEvents()
+        If CType(cboCaseType.SelectedItem, ValueDescription).Value = 0 Then
+            Reader = gSQLGetDataReader("SELECT DISTINCT  GroupID, Description FROM InsuranceCompaniesGroups ORDER BY Description")
+        Else
+            Reader = gSQLGetDataReader("SELECT DISTINCT InsuranceCompaniesGroups.GroupID, InsuranceCompaniesGroups.Description FROM InsuranceCompaniesGroups INNER JOIN InsuranceCompanies ON InsuranceCompaniesGroups.GroupID = InsuranceCompanies.GroupID Where CaseTypeID =" & CType(cboCaseType.SelectedItem, ValueDescription).Value & " ORDER BY InsuranceCompaniesGroups.Description")
+        End If
+        If Reader Is Nothing Then GoTo ExitSub
+        Do Until Reader.Read = False
+            cboInsuranceCompanyID.Items.Add(New ValueDescription(CLng(Val(Reader("GroupID").ToString)), Reader("Description").ToString & " - Group", "0"))
+        Loop
+        If cboInsuranceCompanyID.Items.Count > 0 Then
+            cboInsuranceCompanyID.Items.Add(New ValueDescription(-1, "--------------------------------------INSURANCE COMPANIES--------------------------------------"))
+        End If
+        If CType(cboCaseType.SelectedItem, ValueDescription).Value = 0 Then
+            Reader = gSQLGetDataReader("Select CompanyID, CompanyName from InsuranceCompanies ORDER BY CompanyName")
+        Else
+            Reader = gSQLGetDataReader("Select CompanyID, CompanyName from InsuranceCompanies Where CaseTypeID =" & CType(cboCaseType.SelectedItem, ValueDescription).Value & " ORDER BY CompanyName")
+        End If
+        If Reader Is Nothing Then GoTo ExitSub
+        Do Until Reader.Read = False
+            cboInsuranceCompanyID.Items.Add(New ValueDescription(CLng(Val(Reader("CompanyID").ToString)), Reader("CompanyName").ToString, "1"))
+        Loop
+        If cboInsuranceCompanyID.Items.Count = 0 Then
+            cboInsuranceCompanyID.DropDownHeight = 20
+        End If
+        Reader.Close() : Reader.Dispose()
+ExitSub:
+        Cursor = Cursors.Default
+        '''''''''''''''''''''
+
+        TimerDetails.Stop()
+        TimerLoad.Enabled = False
+        If Loading = False Then TimerLoad.Enabled = True
+    End Sub
+
+    Private Sub ListViewProcedures_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ListViewProcedures.SelectedIndexChanged
+        Dim Reader As SqlClient.SqlDataReader
+        gHighlightListviewItem(ListViewProcedures)
+        Application.DoEvents()
+        TextBoxReading.Text = ""
+        TextBoxCode.Text = ""
+        ListViewDiagnosis.Items.Clear()
+        If ListViewProcedures.SelectedItems.Count > 0 Then
+            If gOfficeTypeID = 1 Or gOfficeTypeID = 3 Then
+                Reader = gSQLGetDataReader("Select ResultDescription, ResultDescription2 From PatientProcedureReadings where PatientProcedureID =" & Val(ListViewProcedures.SelectedItems(0).SubItems(0).Tag))
+                If Reader Is Nothing Then Exit Sub
+                If Reader.HasRows Then
+                    Reader.Read()
+                    TextBoxReading.Text = "DESCRIPTION" & vbCrLf & Reader("ResultDescription") & vbCrLf & vbCrLf & "IMPRESSION" & vbCrLf & Reader("ResultDescription2")
+                End If
+                If TextBoxReading.Text = "" Then
+                    TextBoxReading.ForeColor = Color.Firebrick
+                    TextBoxReading.Text = "ATTENTION!" & vbCrLf & vbCrLf & "THIS PROCEDURE HAS NO READING!"
+                    TextBoxReading.Font = New Font(TextBoxReading.Font, FontStyle.Bold)
+                Else
+                    TextBoxReading.ForeColor = Color.Black
+                    TextBoxReading.Font = New Font(TextBoxReading.Font, FontStyle.Regular)
+                End If
+            End If
+            Load_Diagnosis()
+        End If
+    End Sub
+
+    Private Sub ToolStripButtonShowReading_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ToolStripButtonShowReading.Click
+        frmDocumentPreview.TextBoxReading.Visible = True
+        frmDocumentPreview.pdfViewer.Visible = False
+        frmDocumentPreview.TextBoxReading.Text = TextBoxReading.Text
+        frmDocumentPreview.MinimizeBox = False
+        frmDocumentPreview.MaximizeBox = False
+
+        frmDocumentPreview.ShowDialog(Me)
+        frmDocumentPreview.Dispose()
+
+    End Sub
+
+    Private Sub cmdUpdate_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdUpdate.Click
+        Dim MSG As String = ""
+        Dim N As TreeNode = Nothing
+        Dim CN As TreeNode = Nothing
+        Dim ProceduresCount As Integer = 0
+        Dim DiagnosesCount As Integer = 0
+        Dim PatientID As Long = 0
+        Dim Sql As String = ""
+        Dim BillID As Long = 0
+        Dim BillID2 As Long = 0
+        Dim PatientProcedureID As Long
+        Dim DignosisID As Long
+        Dim Splitted As String = ""
+        Dim Reader As SqlClient.SqlDataReader
+        Dim ServiceFrom As Date
+        Dim ServiceTo As Date
+        Dim ProcID As Integer
+        Dim DiagID As Integer
+        Dim ScheduleDateTime As DateTime
+        Dim AgreementInd As Boolean
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            MsgBox("Unexpected Error. please try again.", MsgBoxStyle.Critical)
+            Exit Sub
+        End If
+
+        If lblClaim.Text = "" Then
+            MsgBox("Unable to create bill." & vbCrLf & vbCrLf & "No Insurance Information specified." & vbCrLf & "Please click the Edit patient information button and specify the Claim Number.", MsgBoxStyle.Critical)
+            TabControl1.SelectedIndex = 1
+            TreeViewBill.Focus()
+            Exit Sub
+        End If
+
+        If lblClaimNumber.Text = "" Then
+            If MsgBox("No Claim Number specified." & vbCrLf & "Do you want to continue?.", MsgBoxStyle.Critical + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                TabControl1.SelectedIndex = 1
+                TreeViewBill.Focus()
+                Exit Sub
+            End If
+        End If
+
+        If lblClaimAddress.Text.Trim = "" Then
+            MsgBox("Unable to create bill." & vbCrLf & vbCrLf & "No Claim Address specified." & vbCrLf & "Please click the Edit patient information button and specify the Claim Number.", MsgBoxStyle.Critical)
+            TabControl1.SelectedIndex = 1
+            TreeViewBill.Focus()
+            Exit Sub
+        End If
+
+        'If lblClaim1.Text <> "" And Val(txtAmt1.Text) > 0 And lblPolicyNumber.Text = "" Then
+        ' MsgBox("Unable to create bill." & vbCrLf & vbCrLf & "No Policy Number specified for the second insurance company." & vbCrLf & "Please click the Edit patient information button and specify the Claim Number.", MsgBoxStyle.Critical)
+        ' TreeViewBill.Focus()
+        ' Exit Sub
+        'End If
+
+        If lblClaim1.Text <> "" And Val(txtAmt1.Text) > 0 And lblClaimNumber1.Text = "" Then
+            If MsgBox("No Claim Number specified for the second insurance company." & vbCrLf & "Do you want to continue?.", MsgBoxStyle.Critical + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                TabControl1.SelectedIndex = 1
+                TreeViewBill.Focus()
+                Exit Sub
+            End If
+        End If
+        If lblClaim1.Text <> "" And Val(txtAmt1.Text) > 0 And lblClaimAddress1.Text.Trim = "" Then
+            MsgBox("Unable to create bill." & vbCrLf & vbCrLf & "No Claim Address specified for the second insurance company." & vbCrLf & "Please click the Edit patient information button and specify the Claim Number.", MsgBoxStyle.Critical)
+            TabControl1.SelectedIndex = 1
+            TreeViewBill.Focus()
+            Exit Sub
+        End If
+
+        If TreeViewBill.Nodes.Count = 0 Then
+            MsgBox("Unable to create bill." & vbCrLf & vbCrLf & "No Procedures / Diagnoses selected.", MsgBoxStyle.Critical)
+            TabControl1.SelectedIndex = 1
+            TreeViewBill.Focus()
+            Exit Sub
+        End If
+        If lblClaim.Text <> "" And Val(txtAmt.Text) = 0 Then
+            If MsgBox("You have assigned 100% of the bill amount to the secondary insurance company." & vbCrLf & vbCrLf & "Do you want to continue?", MsgBoxStyle.YesNo + MsgBoxStyle.Exclamation) = MsgBoxResult.No Then
+                TabControl1.SelectedIndex = 1
+                Exit Sub
+            End If
+        End If
+        If lblClaim1.Text <> "" And Val(txtAmt1.Text) = 0 And PanelTotals.Visible Then
+            If MsgBox("You have assigned 100% of the bill amount to the primary insurance company." & vbCrLf & vbCrLf & "Do you want to continue?", MsgBoxStyle.YesNo + MsgBoxStyle.Exclamation) = MsgBoxResult.No Then
+                TabControl1.SelectedIndex = 1
+                Exit Sub
+            End If
+        End If
+
+        Try
+            ' Validate Bill Date agains procedure dates - Schedule Date Time
+            For Each N In TreeViewBill.Nodes
+                If N.Parent Is Nothing Then
+                    PatientProcedureID = CType(N.Tag, ValueDescription).Value1
+                    Reader = gSQLGetDataReader("Select Schedule.ScheduleDateTime from PatientProcedures inner join Schedule on PatientProcedures.ScheduleID = Schedule.ScheduleID Where PatientProcedureID = " & PatientProcedureID)
+                    If Not Reader Is Nothing Then
+                        If Reader.HasRows Then
+                            Reader.Read()
+                            Dim ProcScheduleDateTime As DateTime = DateTime.Parse(Reader("ScheduleDateTime").ToString)
+                            If ProcScheduleDateTime > DateTimePicker1.Value Then
+                                MsgBox("Unable to create bill." & vbCrLf & vbCrLf & "Invalid Bill Date." & vbCrLf & "The bill date cannot precede the procedure date.", MsgBoxStyle.Critical)
+                                DateTimePicker1.Focus()
+                                Exit Sub
+                            End If
+                        End If
+                    End If
+                    Reader.Close()
+                    Reader = Nothing
+                End If
+            Next
+
+
+            PatientID = ListViewPatients.SelectedItems(0).Tag
+            Dim TreatingProviderID As Long
+            For Each N In TreeViewBill.Nodes
+                If N.Parent Is Nothing Then
+                    TreatingProviderID = CType(N.Tag, ValueDescription).Fld1
+                    PatientProcedureID = CType(N.Tag, ValueDescription).Value1
+
+                    If AgreementInd = False Then
+                        Dim agsql As String
+                        agsql = "SELECT COUNT(*) FROM DiagnosticsAgreementFormulas INNER JOIN PatientProcedures ON DiagnosticsAgreementFormulas.DiagID = PatientProcedures.DiagID WHERE "
+                        agsql &= "PatientProcedures.PatientProcedureID = " & PatientProcedureID & " And "
+                        agsql &= "DiagnosticsAgreementFormulas.CaseTypeID = " & Val(lblCaseTypeID.Tag) & " And "
+                        agsql &= "DiagnosticsAgreementFormulas.InsuranceCompanyID = " & Val(lblInsuranceCompanyID.Tag) & " And "
+                        agsql &= "DiagnosticsAgreementFormulas.OfficeID = " & gOfficeID
+                        AgreementInd = CBool(gSQLGetSingleValue(agsql))
+                    End If
+                    ProceduresCount += 1
+                    For Each CN In N.Nodes
+                        DiagnosesCount += 1
+                    Next
+                End If
+            Next
+            If Val(txtAmt1.Text) > 0 Then
+                MSG = "The following 2 Bills will be created for the patient:  " & vbCrLf & vbCrLf & ListViewPatients.SelectedItems(0).SubItems(1).Text & vbCrLf & vbCrLf
+            Else
+                MSG = "The following Bill creation for the patient:  " & vbCrLf & vbCrLf & ListViewPatients.SelectedItems(0).SubItems(1).Text & vbCrLf & vbCrLf
+            End If
+
+            If Val(txtAmt1.Text) > 0 And PanelTotals.Visible Then
+                Splitted = " Split "
+                MSG &= "Total Procedures:  " & ProceduresCount & vbCrLf
+                MSG &= "Total Diagnoses:  " & DiagnosesCount & vbCrLf
+                MSG &= "Total Amount:  " & lblTotal.Text & " will be split between 2 bills: " & vbCrLf & vbCrLf
+                MSG &= "Insurance Company 1:  " & txtAmt.Tag & "%   -   " & CDbl(txtAmt.Text).ToString("c") & vbCrLf & vbCrLf
+                MSG &= "Insurance Company 2:  " & txtAmt1.Tag & "%   -   " & CDbl(txtAmt1.Text).ToString("c") & vbCrLf
+            Else
+                MSG &= "Bill Procedures:  " & ProceduresCount & vbCrLf
+                MSG &= "Bill Diagnoses:  " & DiagnosesCount & vbCrLf
+                MSG &= "Bill Amount:  " & lblTotal.Text & vbCrLf
+            End If
+            If AgreementInd Then
+                MSG &= vbCrLf & vbCrLf & "ATTENTION:" & vbCrLf
+                MSG &= "This bill contains the procedure(s) for which the price falls under the price calculation insurance company agreement contract." & vbCrLf
+                MSG &= "The bill price would adjusted as per company agreement contract."
+            End If
+            MSG &= vbCrLf & vbCrLf & "Please confirm..."
+            If MsgBox(MSG, MsgBoxStyle.Question + MsgBoxStyle.OkCancel) = MsgBoxResult.Cancel Then
+                TabControl1.SelectedIndex = 1
+                Exit Sub
+            End If
+
+            Sql = "INSERT INTO Bills "
+            Sql &= " (OfficeID, ScheduleID, PatientID, CaseTypeID, BillAmount, BillDiscountPct, BillProcedures, BillStatusID, BillDate, ClaimNumber, Adjuster, InsAddressID, InsCompanyID, PolicyNumber, AdjusterPhone, PolicyHolder, BillingProviderID, TreatingProviderID, AgreementInd) "
+            Sql &= " VALUES     (" & gOfficeID & ", 0, " & PatientID & "," & Val(lblCaseTypeID.Tag) & "," & CDbl(txtAmt.Text) & ",0," & ProceduresCount & ",1,'" & DateTimePicker1.Value.ToShortDateString & "','" & lblClaimNumber.Text.ToSafeSQLString() & "', '" & lblAdjuster.Text.ToSafeSQLString() & "', " & Val(lblClaimAddress.Tag) & ", " & Val(lblInsuranceCompanyID.Tag) & ", '" & lblPolicyNumber.Text.ToSafeSQLString() & "', '" & lblAdjusterPhone.Text.ToSafeSQLString() & "', '" & lblPolicyHolder.Text.ToSafeSQLString() & "', " & BPID & ", " & TreatingProviderID & ", " & IIf(AgreementInd, 1, 0) & ") "
+            If gSQLUpdateData(Sql) = False Then
+                Exit Sub
+            End If
+
+            'BillID = gSQLGetSingleValue("Select MAX(BillID) from Bills")
+            BillID = gSQLGetSingleValue("Select IDENT_CURRENT('bills')")
+
+            For Each N In TreeViewBill.Nodes
+                If N.Parent Is Nothing Then
+                    PatientProcedureID = CType(N.Tag, ValueDescription).Value1
+                    ProcID = 0
+                    DiagID = 0
+                    Reader = gSQLGetDataReader("Select Schedule.ScheduleDateTime, ProcID, DiagID from PatientProcedures inner join Schedule on PatientProcedures.ScheduleID = Schedule.ScheduleID Where PatientProcedureID = " & PatientProcedureID)
+                    If Not Reader Is Nothing Then
+                        If Reader.HasRows Then
+                            Reader.Read()
+                            ProcID = Val(Reader("ProcID").ToString)
+                            DiagID = Val(Reader("DiagID").ToString)
+                            ScheduleDateTime = CDate(Reader("ScheduleDateTime").ToString())
+                        End If
+                    End If
+                    Reader.Close()
+                    Reader = Nothing
+
+                    Sql = "INSERT INTO BillProcedures (BillID, PatientProcedureID, ProcID, DiagID) VALUES(" & BillID & ", " & PatientProcedureID & ", " & ProcID & ", " & DiagID & ")"
+                    gSQLUpdateData(Sql)
+                    Dim AgrSQL As String
+                    Dim AgrNFCost As Decimal = 0
+                    Dim AgrWCCost As Decimal = 0
+                    Dim AgrPRCost As Decimal = 0
+                    Dim AgrInd As Integer = 0
+                    Dim PatientProceduresCount As Integer = 0
+                    Dim AgrFormula As String = ""
+
+                    If AgreementInd Then
+
+                        ''''''''''''''   Calculate agreement Formula '''''''''''''''''''''''''''
+                        ' To be developed
+                        AgrSQL = "SELECT COUNT(*) AS C FROM BillProcedures INNER JOIN PatientProcedures ON BillProcedures.PatientProcedureID = PatientProcedures.PatientProcedureID "
+                        AgrSQL &= " WHERE PatientProcedures.PatientID = " & PatientID & " AND BillProcedures.DiagID = " & DiagID & " AND  PatientProcedures.OfficeID = " & gOfficeID
+                        PatientProceduresCount = gSQLGetSingleValue(AgrSQL)
+
+                        AgrSQL = "SELECT TOP (1) Formula FROM DiagnosticsAgreementFormulas "
+                        AgrSQL &= " WHERE ProcedureNumber <= " & PatientProceduresCount & " And "
+                        AgrSQL &= " InsuranceCompanyID = " & Val(lblInsuranceCompanyID.Tag) & " And "
+                        AgrSQL &= " DiagID = " & DiagID & " "
+                        AgrSQL &= " ORDER BY ProcedureNumber DESC "
+
+
+                        AgrFormula = gSQLGetSingleValueString(AgrSQL)
+                        If AgrFormula.Trim().Length > 0 Then
+                            AgrSQL = "select "
+                            AgrSQL &= " (NFCost " & AgrFormula & ") as AgrNFCost, "
+                            AgrSQL &= " (WCCost " & AgrFormula & ") as AgrWCCost, "
+                            AgrSQL &= " (PRCost " & AgrFormula & ") as AgrPRCost "
+                            AgrSQL &= " FROM dbo.Procedures  "
+                            AgrSQL &= " Where Procedures.ProcID = " & ProcID
+                            Reader = gSQLGetDataReader(AgrSQL)
+                            If Not Reader Is Nothing Then
+                                If Reader.HasRows Then
+                                    Reader.Read()
+                                    AgrNFCost = Val("" & Reader("AgrNFCost").ToString)
+                                    AgrWCCost = Val("" & Reader("AgrWCCost").ToString)
+                                    AgrPRCost = Val("" & Reader("AgrPRCost").ToString)
+                                    AgrInd = 1
+                                End If
+                            End If
+                            Reader.Close()
+                            Reader = Nothing
+
+                        End If
+                    End If
+                    ' For now, Formula Calculated for NF only.
+                    'If ScheduleDateTime > CDate("10/01/2020") And gOfficeTypeID = 1 Then
+                    '    Sql = "UPDATE BillProcedures SET BillProcedures.ProcName = Procedures.ProcName, BillProcedures.ProcDescription = Procedures.ProcDescription, BillProcedures.Code  = Procedures.Code , BillProcedures.NFCost  = " & IIf(AgrFormula.Length > 0, AgrNFCost.ToString(), "Procedures.WCCost") & " , BillProcedures.WCCost  = " & IIf(AgrFormula.Length > 0, AgrWCCost.ToString(), "Procedures.WCCost") & " , BillProcedures.PRCost  = " & IIf(AgrFormula.Length > 0, AgrWCCost.ToString(), "Procedures.PRCost") & " "
+                    'Else
+                    '    Sql = "UPDATE BillProcedures SET BillProcedures.ProcName = Procedures.ProcName, BillProcedures.ProcDescription = Procedures.ProcDescription, BillProcedures.Code  = Procedures.Code , BillProcedures.NFCost  = " & IIf(AgrFormula.Length > 0, AgrWCCost.ToString(), "Procedures.NFCost") & " , BillProcedures.WCCost  = " & IIf(AgrFormula.Length > 0, AgrWCCost.ToString(), "Procedures.WCCost") & " , BillProcedures.PRCost  = " & IIf(AgrFormula.Length > 0, AgrWCCost.ToString(), "Procedures.PRCost") & " "
+                    'End If
+                    If ScheduleDateTime > CDate("10/01/2020") And gOfficeTypeID = 1 Then
+                        Sql = "UPDATE BillProcedures SET BillProcedures.ProcName = Procedures.ProcName, BillProcedures.ProcDescription = Procedures.ProcDescription, BillProcedures.Code  = Procedures.Code , BillProcedures.NFCost  = " & IIf(AgrFormula.Length > 0, AgrWCCost.ToString(), "Procedures.WCCost") & " , BillProcedures.WCCost  = Procedures.WCCost , BillProcedures.PRCost  = Procedures.PRCost "
+                    Else
+                        Sql = "UPDATE BillProcedures SET BillProcedures.ProcName = Procedures.ProcName, BillProcedures.ProcDescription = Procedures.ProcDescription, BillProcedures.Code  = Procedures.Code , BillProcedures.NFCost  = " & IIf(AgrFormula.Length > 0, AgrNFCost.ToString(), "Procedures.NFCost") & " , BillProcedures.WCCost  = Procedures.WCCost , BillProcedures.PRCost  = Procedures.PRCost"
+                    End If
+
+                    Sql &= ", AgreementInd = " & AgrInd & ", BillProcedures.AgrNFCost = " & AgrNFCost & ", BillProcedures.AgrWCCost = " & AgrWCCost & ", BillProcedures.AgrPRCost = " & AgrPRCost & ""
+                    Sql &= " FROM dbo.Procedures INNER JOIN BillProcedures On BillProcedures.ProcID = Procedures.ProcID "
+                    Sql &= " Where BillProcedures.PatientProcedureID = " & PatientProcedureID & " And BillProcedures.BillID=" & BillID & " And BillProcedures.ProcID=" & ProcID
+                    gSQLUpdateData(Sql)
+                    For Each CN In N.Nodes
+                        DignosisID = CN.Tag
+                        Sql = "INSERT INTO BillDiagnosis (BillID, PatientProcedureID, DignosisID) VALUES(" & BillID & ", " & PatientProcedureID & "," & DignosisID & ")"
+                        gSQLUpdateData(Sql)
+                        Sql = "UPDATE BillDiagnosis Set BillDiagnosis.ICDCode =Diagnosis.ICDCode, BillDiagnosis.ICDDescription =Diagnosis.ICDDescription FROM dbo.Diagnosis INNER JOIN dbo.BillDiagnosis On BillDiagnosis.DignosisID = Diagnosis.DignosisID "
+                        Sql &= " Where BillDiagnosis.BillID = " & BillID & " And BillDiagnosis.DignosisID = " & DignosisID
+                        gSQLUpdateData(Sql)
+                    Next
+                End If
+            Next
+            Dim AdjustedBillAmount As Double = 0
+            Select Case Val(lblCaseTypeID.Tag)
+                Case 1
+                    gSQLUpdateData("Update Bills Set BillAmount  = (Select sum(NFCost) from BillProcedures where BillID = " & BillID & ") where BillID = " & BillID)
+                    AdjustedBillAmount = gSQLGetSingleValue("Select BillAmount from Bills Where BillID = " & BillID)
+                    ' For now, Formula Calculated for NF only.
+                    'Case 2
+                    '    gSQLUpdateData("Update Bills Set BillAmount  = (Select sum(WCCost) from BillProcedures where BillID = " & BillID & ") where BillID = " & BillID)
+                    'Case 3
+                    '    gSQLUpdateData("Update Bills Set BillAmount  = (Select sum(PRCost) from BillProcedures where BillID = " & BillID & ") where BillID = " & BillID)
+            End Select
+
+
+            Sql = "Select MIN(Schedule.ScheduleDateTime) As MinDT, MAX(Schedule.ScheduleDateTime) As MaxDT FROM BillProcedures INNER JOIN PatientProcedures On BillProcedures.PatientProcedureID = PatientProcedures.PatientProcedureID INNER JOIN Schedule On PatientProcedures.ScheduleID = Schedule.ScheduleID GROUP BY BillProcedures.BillID HAVING(BillProcedures.BillID = " & BillID & ")"
+            Reader = gSQLGetDataReader(Sql)
+            If Reader.HasRows Then
+                Reader.Read()
+                ServiceFrom = CDate(Reader("MinDT").ToString).ToString("MM/dd/yyyy")
+                ServiceTo = CDate(Reader("MaxDT").ToString).ToString("MM/dd/yyyy")
+                gSQLUpdateData("Update Bills Set ServiceFrom = '" & ServiceFrom & "', ServiceTo='" & ServiceTo & "' Where BillID=" & BillID)
+            End If
+            gUpdate_Profile_Log(PatientID, PatientLogTypes.tBillCreated, Splitted & "Bill# " & BillID & " created. ; Bill Amount: " & CDbl(txtAmt.Text) & "; Bill Procedures: " & ProceduresCount)
+            If Val(txtAmt1.Text) > 0 And PanelTotals.Visible Then
+                Sql = "INSERT INTO Bills "
+                Sql &= " (OfficeID, ScheduleID, PatientID, CaseTypeID, BillAmount, BillDiscountPct, BillProcedures, BillStatusID, BillDate, ClaimNumber, Adjuster, InsAddressID, InsCompanyID, PolicyNumber, AdjusterPhone, PolicyHolder, BillingProviderID, TreatingProviderID) "
+                Sql &= " VALUES     (" & gOfficeID & ", 0, " & PatientID & "," & Val(lblCaseTypeID.Tag) & "," & CDbl(txtAmt1.Text) & ",0," & ProceduresCount & ",1,'" & DateTimePicker1.Value.ToShortDateString & "','" & lblClaimNumber1.Text.ToSafeSQLString() & "', '" & lblAdjuster1.Text.ToSafeSQLString() & "', " & Val(lblClaimAddress1.Tag) & ", " & Val(lblInsuranceCompanyID1.Tag) & ", '" & lblPolicyNumber1.Text.ToSafeSQLString() & "', '" & lblAdjusterPhone1.Text.ToSafeSQLString() & "', '" & lblPolicyHolder1.Text.ToSafeSQLString() & "', " & BPID & ", " & TreatingProviderID & ") "
+
+                gSQLUpdateData(Sql)
+                'BillID2 = gSQLGetSingleValue("Select MAX(BillID) from Bills")
+                BillID2 = gSQLGetSingleValue("Select IDENT_CURRENT('bills')")
+                For Each N In TreeViewBill.Nodes
+                    If N.Parent Is Nothing Then
+                        PatientProcedureID = CType(N.Tag, ValueDescription).Value1
+                        Sql = "INSERT INTO BillProcedures (BillID, PatientProcedureID) VALUES(" & BillID2 & ", " & PatientProcedureID & ")"
+                        gSQLUpdateData(Sql)
+                        If ScheduleDateTime > CDate("10/01/2020") And gOfficeTypeID = 1 Then
+                            Sql = "UPDATE BillProcedures SET BillProcedures.ProcName = Procedures.ProcName, BillProcedures.ProcDescription = Procedures.ProcDescription, BillProcedures.Code  = Procedures.Code , BillProcedures.NFCost  = Procedures.WCCost , BillProcedures.WCCost  = Procedures.WCCost , BillProcedures.PRCost  = Procedures.PRCost FROM dbo.Procedures INNER JOIN BillProcedures ON BillProcedures.ProcID = Procedures.ProcID "
+                        Else
+                            Sql = "UPDATE BillProcedures SET BillProcedures.ProcName = Procedures.ProcName, BillProcedures.ProcDescription = Procedures.ProcDescription, BillProcedures.Code  = Procedures.Code , BillProcedures.NFCost  = Procedures.NFCost , BillProcedures.WCCost  = Procedures.WCCost , BillProcedures.PRCost  = Procedures.PRCost FROM dbo.Procedures INNER JOIN BillProcedures ON BillProcedures.ProcID = Procedures.ProcID "
+                        End If
+                        Sql &= " Where BillProcedures.BillID=" & BillID2 & " and BillProcedures.PatientProcedureID=" & PatientProcedureID
+                        gSQLUpdateData(Sql)
+                        For Each CN In N.Nodes
+                            DignosisID = CN.Tag
+                            Sql = "INSERT INTO BillDiagnosis (BillID, PatientProcedureID, DignosisID) VALUES(" & BillID2 & ", " & PatientProcedureID & "," & DignosisID & ")"
+                            gSQLUpdateData(Sql)
+                            Sql = "UPDATE BillDiagnosis SET BillDiagnosis.ICDCode =Diagnosis.ICDCode, BillDiagnosis.ICDDescription =Diagnosis.ICDDescription FROM dbo.Diagnosis INNER JOIN dbo.BillDiagnosis ON BillDiagnosis.DignosisID = Diagnosis.DignosisID "
+                            Sql &= " Where BillDiagnosis.BillID = " & BillID2 & " and BillDiagnosis.DignosisID = " & DignosisID
+                            gSQLUpdateData(Sql)
+                        Next
+                    End If
+                Next
+                'If TextBoxBillComments.Text.Trim <> "" Then
+                '    Sql = "INSERT INTO BillComments (BillID, Comment, InsertedBy, InsertedDT) values(" & BillID & ", '" & RBC(TextBoxBillComments.Text.Trim) & "', " & gCurrentEmployee.EmpID & ", getdate())"
+                '    gSQLUpdateData(Sql)
+                '    If Val(BillID2) <> 0 Then
+                '        Sql = "INSERT INTO BillComments (BillID, Comment, InsertedBy, InsertedDT) values(" & BillID2 & ", '" & RBC(TextBoxBillComments.Text.Trim) & "', " & gCurrentEmployee.EmpID & ", getdate())"
+                '        gSQLUpdateData(Sql)
+                '    End If
+                'End If
+
+                Sql = "SELECT MIN(Schedule.ScheduleDateTime) AS MinDT, MAX(Schedule.ScheduleDateTime) AS MaxDT FROM BillProcedures INNER JOIN PatientProcedures ON BillProcedures.PatientProcedureID = PatientProcedures.PatientProcedureID INNER JOIN Schedule ON PatientProcedures.ScheduleID = Schedule.ScheduleID GROUP BY BillProcedures.BillID HAVING(BillProcedures.BillID = " & BillID2 & ")"
+                Reader = gSQLGetDataReader(Sql)
+                If Reader.HasRows Then
+                    Reader.Read()
+                    ServiceFrom = CDate(Reader("MinDT").ToString).ToString("MM/dd/yyyy")
+                    ServiceTo = CDate(Reader("MaxDT").ToString).ToString("MM/dd/yyyy")
+                    gSQLUpdateData("Update Bills set ServiceFrom = '" & ServiceFrom & "', ServiceTo='" & ServiceTo & "' Where BillID=" & BillID2)
+                End If
+                gUpdate_Profile_Log(PatientID, PatientLogTypes.tBillCreated, Splitted & "Bill# " & BillID2 & " created. Bill Amount: " & CDbl(txtAmt1.Text) & " Bill Procedures: " & ProceduresCount)
+                gSQLUpdateData("Update Bills Set SplitBillID = " & BillID2 & " Where BillID = " & BillID)
+                gSQLUpdateData("Update Bills Set SplitBillID = " & BillID & " Where BillID = " & BillID2)
+            End If
+            If AgreementInd And AdjustedBillAmount > 0 Then
+                Dim Pct As Double = (AdjustedBillAmount * 100) / CDbl(txtAmt.Text)
+                MsgBox("Based on agreement formula, the bill amount has been adjusted:" & vbCrLf & vbCrLf & "Original Bill Amount:" & CDbl(txtAmt.Text).ToString("C") & vbCrLf & vbCrLf & "Adjusted bill amount: " & AdjustedBillAmount.ToString("C"), MsgBoxStyle.OkOnly + MsgBoxStyle.Exclamation)
+            End If
+            If CheckBox1.Checked Then
+                If Print_Bill(BillID, BillID2) Then
+                    'Print_Readings(BillID, BillID2)
+                End If
+            End If
+
+            Enable_Controls(False)
+            TreeViewBill.Nodes.Clear()
+            lblTotal.Text = ""
+            OpMode = AddEditMode.None
+            ListViewPatients_SelectedIndexChanged(Nothing, Nothing)
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+        End Try
+    End Sub
+
+    Private Sub Print_Readings(ByVal BillID1 As Long, Optional ByVal BillID2 As Long = 0)
+        Dim Reader As SqlClient.SqlDataReader
+        Dim PatientProcedureID() As Long = Nothing
+        Dim SQL As String
+        Dim I As Integer = 0
+        SQL = "SELECT     BillProcedures.PatientProcedureID FROM BillProcedures INNER JOIN PatientProcedureReadings ON BillProcedures.PatientProcedureID = PatientProcedureReadings.PatientProcedureID "
+        SQL &= " WHERE    BillProcedures.BillID = " & BillID1
+        If BillID2 <> 0 Then
+            SQL &= " OR BillProcedures.BillID = " & BillID1
+        End If
+        Reader = gSQLGetDataReader(SQL)
+        If Reader Is Nothing Then Exit Sub
+        If Reader.HasRows = False Then
+            If BillID2 = 0 Then
+                MsgBox("The bill procedure(s) does not have reading reports!", MsgBoxStyle.Exclamation)
+            Else
+                MsgBox("The bills procedure(s) does not have reading reports!", MsgBoxStyle.Exclamation)
+            End If
+            Exit Sub
+        Else
+            If MsgBox("Would you like to print procedures reading reports?", MsgBoxStyle.Question + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                Exit Sub
+            End If
+        End If
+        Do Until Reader.Read = False
+            ReDim Preserve PatientProcedureID(I)
+            PatientProcedureID(I) = Reader("PatientProcedureID").ToString
+        Loop
+        Reader.Close() : Reader.Dispose()
+        Dim PatientID As Integer = Val(ListViewPatients.SelectedItems(0).Tag)
+        frmReadingReport.Setup_report(PatientProcedureID, PatientID)
+        frmReadingReport.MinimizeBox = False
+        frmReadingReport.MaximizeBox = False
+
+        frmReadingReport.ShowDialog(Me)
+        frmReadingReport.Dispose()
+    End Sub
+
+    Private Function Print_Bill(ByVal pBillID As Long, Optional ByVal BillID2 As Long = 0) As Boolean
+        Dim BillID() As String = Nothing
+        Dim CaseTypeID As Long = gSQLGetSingleValue("select CaseTypeID from Bills where BillID=" & pBillID)
+        Select Case CaseTypeID
+            Case 1 ' 1=No Fault,
+                ReDim Preserve BillID(0)
+                BillID(0) = pBillID
+                If BillID2 > 0 Then
+                    ReDim Preserve BillID(1)
+                    BillID(1) = BillID2
+                End If
+                frmNF3Report.Setup_report(BillID, 1)
+                frmNF3Report.MinimizeBox = False
+                If frmNF3Report.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+                    Print_Bill = True
+                End If
+                frmNF3Report.Dispose()
+            Case 2 ' 2=WC,
+                ReDim Preserve BillID(0)
+                BillID(0) = pBillID
+                frmNF3Report.Setup_report(BillID, 2)
+                frmNF3Report.MinimizeBox = False
+                If frmNF3Report.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+                    Print_Bill = True
+                End If
+                frmNF3Report.Dispose()
+            Case 3 ' Private
+                ReDim Preserve BillID(0)
+                BillID(0) = pBillID
+                frmNF3Report.Setup_report(BillID, 3)
+                frmNF3Report.MinimizeBox = False
+
+                If frmNF3Report.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+                    Print_Bill = True
+                End If
+                frmNF3Report.Dispose()
+            Case 5
+                ReDim Preserve BillID(0)
+                BillID(0) = pBillID
+                frmNF3Report.Setup_report(BillID, 5)
+                frmNF3Report.MinimizeBox = False
+
+                If frmNF3Report.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+                    Print_Bill = True
+                End If
+                frmNF3Report.Dispose()
+        End Select
+
+    End Function
+
+    Private Sub cmdClose_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdClose.Click
+        Me.Close()
+    End Sub
+
+    Private Sub ButtonDn_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ButtonDn.Click
+        ListViewDiagnosis_DoubleClick(Nothing, Nothing)
+    End Sub
+
+    Private Sub TreeViewBill_BeforeCollapse(ByVal sender As Object, ByVal e As System.Windows.Forms.TreeViewCancelEventArgs) Handles TreeViewBill.BeforeCollapse
+        e.Cancel = True
+    End Sub
+
+    Private Sub Calculate_BillTotoals()
+        Dim N As TreeNode
+        Dim Price As Decimal = 0
+        Dim Total As Decimal = 0
+        For Each N In TreeViewBill.Nodes
+            Price = CType(N.Tag, ValueDescription).Description
+            Total += Price
+        Next
+        If Total = 0 Then
+            lblTotal.Text = 0
+            txtAmt.Text = ""
+            txtAmt1.Text = ""
+        Else
+            If lblClaim1.Text <> "" Then
+                txtAmt.Text = (Total * txtAmt.Tag) / 100
+                txtAmt1.Text = Total - ((Total * txtAmt.Tag) / 100)
+            Else
+                txtAmt.Text = Total
+                txtAmt1.Text = ""
+            End If
+        End If
+        lblTotal.Text = Total.ToString("c")
+    End Sub
+
+    Private Sub cmdCancel_Click(ByVal sender As Object, ByVal e As System.EventArgs) Handles cmdCancel.Click
+        ListViewPatients_SelectedIndexChanged(Nothing, Nothing)
+        Enable_Controls(False)
+        TreeViewBill.Nodes.Clear()
+        lblTotal.Text = ""
+        OpMode = AddEditMode.None
+    End Sub
+
+    Private Sub ButtonUp_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ButtonUp.Click
+        TreeViewBill_NodeMouseDoubleClick(Nothing, Nothing)
+    End Sub
+
+    Private Sub ToolStripButtonAddDiagnose_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ToolStripButtonAddDiagnose.Click
+        With frmDiagnosisMaintenance
+            .Width = 416
+            .CalledListBox = ListViewDiagnosis
+            .cmdDelete.Visible = False
+            .cmdAddNew.Visible = False
+            .cmdEdit.Visible = False
+            .cmdClose.Visible = False
+            .PanelDiagnoses.Visible = False
+            .cmdAddNew_Click(Nothing, Nothing)
+            .MinimizeBox = False
+            .MaximizeBox = False
+            .ShowDialog(Me)
+            .Dispose()
+        End With
+
+    End Sub
+
+    Private Sub ListViewDiagnosis_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ListViewDiagnosis.SelectedIndexChanged
+        gHighlightListviewItem(ListViewDiagnosis)
+    End Sub
+
+    Private Sub DeleteBillToolStripMenuItem_Click(ByVal sender As Object, ByVal e As System.EventArgs) Handles DeleteBillToolStripMenuItem.Click
+        Dim N As TreeNode
+        Dim BillID As Long = 0
+        Dim BillID1 As Long = 0
+        Dim Bill1 As String = ""
+        Dim N1() As TreeNode = Nothing
+        N = TreeViewBills.SelectedNode
+        If N Is Nothing Then Exit Sub
+        If Not N.Parent Is Nothing Then N = N.Parent
+        If Not N.Parent Is Nothing Then N = N.Parent
+        BillID = Val(CType(N.Tag, ValueDescription).Value)
+        BillID1 = Val(CType(N.Tag, ValueDescription).Value1)
+
+        If gSQLGetSingleValue("SELECT    count(*) FROM Bills WHERE Bills.BillStatusID=1 and  Bills.BillID = " & BillID) = 0 Then
+
+            MsgBox("Unable to delete the selected bill. This bill has already been processed. " & vbCrLf & vbCrLf & "Only unprocessed bills can be deleted.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        Else
+
+        End If
+
+        If BillID1 > 0 Then
+            N1 = TreeViewBills.Nodes.Find("K" & BillID1, False)
+            If N1.Length > 0 Then
+                Bill1 = N1(0).Text
+            Else
+                Bill1 = " #" & BillID1
+            End If
+            If MsgBox("You have requested to delete Split Bill: " & N.Text & vbCrLf & "The Remaining Split Bill: " & Bill1 & " will be deleted also!" & vbCrLf & vbCrLf & "Please make sure these bills have not been mailed to the insurance companies!" & vbCrLf & "Do you want to continue?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                Exit Sub
+            End If
+        Else
+            If MsgBox("You have requested to delete the Bill: " & N.Text & vbCrLf & vbCrLf & "Please make sure this bill has not been mailed to the insurance company!" & vbCrLf & "Do you want to continue?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                Exit Sub
+            End If
+        End If
+        Try
+            gSQLDeleteRecord("Delete From Bills Where BillID = " & BillID)
+            gSQLDeleteRecord("Delete From BillDiagnosis Where BillID = " & BillID)
+            gSQLDeleteRecord("Delete From BillProcedures Where BillID = " & BillID)
+            gSQLDeleteRecord("Delete From BillComments Where BillID = " & BillID)
+            TreeViewBills.Nodes.Remove(N)
+            If BillID1 > 0 Then
+                gSQLDeleteRecord("Delete From Bills Where BillID = " & BillID1)
+                gSQLDeleteRecord("Delete From BillDiagnosis Where BillID = " & BillID1)
+                gSQLDeleteRecord("Delete From BillProcedures Where BillID = " & BillID1)
+                gSQLDeleteRecord("Delete From BillComments Where BillID = " & BillID1)
+                If N1.Length > 0 Then
+                    TreeViewBills.Nodes.Remove(N1(0))
+                End If
+            End If
+
+            Load_PatientProcedures()
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+        End Try
+    End Sub
+
+    Private Sub ContextMenuStripBills_Opening(ByVal sender As System.Object, ByVal e As System.ComponentModel.CancelEventArgs) Handles ContextMenuStripBills.Opening
+        Dim mnu As Object
+        If ListViewPatients.Items.Count = 0 Then
+            e.Cancel = True
+            Exit Sub
+        Else
+            For Each mnu In ContextMenuStripBills.Items
+                mnu.enabled = True
+            Next
+        End If
+        If OpMode <> AddEditMode.None Then
+            DeleteBillToolStripMenuItem.Enabled = False
+            ToolStripSeparator4.Enabled = False
+        End If
+        'If TreeViewBills.SelectedNode Is Nothing Then e.Cancel = True
+    End Sub
+
+    Private Sub ToolStripButton1_DropDownItemClicked(ByVal sender As Object, ByVal e As System.Windows.Forms.ToolStripItemClickedEventArgs) Handles ToolStripButton1.DropDownItemClicked
+        If e.ClickedItem.Text = "All To Primary" Then
+            txtAmt.Tag = 100
+            txtAmt1.Tag = 0
+        ElseIf e.ClickedItem.Text = "All To Secondary" Then
+            txtAmt.Tag = 0
+            txtAmt1.Tag = 100
+        Else
+            txtAmt.Tag = Val(e.ClickedItem.Text)
+            txtAmt1.Tag = 100 - Val(e.ClickedItem.Text)
+        End If
+
+        ToolTip1.SetToolTip(txtAmt, txtAmt.Tag & "%")
+        ToolTip1.SetToolTip(txtAmt1, txtAmt1.Tag & "%")
+        Calculate_BillTotoals()
+    End Sub
+
+    Private Sub Enable_Controls(ByVal En As Boolean)
+
+        'gLoop_Enable_Controls(Me, En, TextBoxSearch)
+        'ButtonDn.Enabled = En
+        'ButtonUp.Enabled = En
+        TextBoxSearch.Enabled = Not En
+        cboCaseType.Enabled = Not En
+        'ComboBoxDiagnosisFilter.Enabled = En
+        TextBoxCode.Enabled = En
+        'ToolStripButtonAddDiagnose.Enabled = En
+        ListViewPatients.Enabled = Not En
+        TextBoxCode.Enabled = True
+        TreeViewBills.BackColor = IIf(Not En, Color.White, Color.WhiteSmoke)
+        txtAmt.Enabled = False
+        txtAmt1.Enabled = False
+
+        If En Then
+            If lblClaim1.Text <> "" Then
+                txtAmt.Enabled = (lblClaim.Text <> "")
+                txtAmt1.Enabled = (lblClaim1.Text <> "")
+            End If
+        End If
+        'txtAmt.Enabled = False
+        'txtAmt1.Enabled = False
+
+        'ListViewProcedures.BackColor = IIf(En, Color.White, Color.WhiteSmoke)
+        'ListViewDiagnosis.BackColor = IIf(En, Color.White, Color.WhiteSmoke)
+        'TreeViewBill.BackColor = IIf(En, Color.White, Color.WhiteSmoke)
+        'If lblLocked.Visible And lblLocked.Visible = True And gCurrentEmployee.PositionID > 2 Then
+        '    cmdAddNew.Enabled = False
+        '    cmdUpdate.Enabled = False
+        '    cmdCancel.Enabled = False
+        'Else
+        cmdAddNew.Enabled = Not En
+        cmdUpdate.Enabled = En
+        cmdCancel.Enabled = En
+        ' End If
+    End Sub
+
+    Private Sub ToolStripMenuItem1_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ToolStripMenuItem1.Click
+        Dim LI As ListViewItem
+        Application.DoEvents()
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            MsgBox("Unable to show patient's information. No Patient selected.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        If TreeViewBill.Nodes.Count > 0 Then
+            If MsgBox("If you will change the Patient Information," & vbCrLf & "the New Bill (not saved) information will be lost." & vbCrLf & vbCrLf & "Do you want to continue?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                Exit Sub
+            End If
+        End If
+        LI = ListViewPatients.SelectedItems(0)
+
+        Using NewFrm As New frmPatient
+
+            NewFrm.Width = 1225
+            NewFrm.WindowState = FormWindowState.Normal
+            NewFrm.Location = New Drawing.Point(Me.Left + ((Width - frmPatient.Size.Width) \ 2), Me.Top + ((Height - frmPatient.Size.Height) \ 2))
+            NewFrm.InitialTab = 0
+            'NewFrm.InitialPatientName = LI.SubItems(1).Text
+            NewFrm.InitialPatientName = LI.Tag
+            NewFrm.InitialEdit = False
+            NewFrm.MinimizeBox = False
+            NewFrm.MaximizeBox = False
+            If NewFrm.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+                cmdCancel_Click(Nothing, Nothing)
+                'ListViewPatients_SelectedIndexChanged(Nothing, Nothing)
+            End If
+        End Using
+        'Dim frm As Form = FormsCollection.FindForm("frmPatient")
+        'If Not frm Is Nothing Then
+
+        '    'MsgBox("The Patient's information window is already opened." & vbCrLf & vbCrLf & "Please close the previous patient information window before opening a new one.", MsgBoxStyle.Exclamation)
+        '    'frm.WindowState = FormWindowState.Normal
+        '    'frm.BringToFront()
+        '    'Exit Sub
+        'Else
+
+        '    frmPatient.Width = 1225
+        '    frmPatient.WindowState = FormWindowState.Normal
+        '    frmPatient.Location = New Point(Me.Left + ((Width - frmPatient.Size.Width) \ 2), Me.Top + ((Height - frmPatient.Size.Height) \ 2))
+        '    frmPatient.InitialTab = 0
+        '    'frmPatient.InitialPatientName = LI.SubItems(1).Text
+        '    frmPatient.InitialPatientName = LI.Tag
+        '    frmPatient.InitialEdit = False
+        '    If frmPatient.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+        '        cmdCancel_Click(Nothing, Nothing)
+        '        'ListViewPatients_SelectedIndexChanged(Nothing, Nothing)
+        '    End If
+        'End If
+    End Sub
+
+    Private Sub PrintPOMToolStripMenuItem_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles PrintPOMToolStripMenuItem.Click
+        Dim BillID() As String = Nothing
+        Dim I As Integer = 0
+        Dim Found As Integer = 0
+        Try
+            For I = 0 To TreeViewBills.Nodes.Count - 1
+                If TreeViewBills.Nodes(I).Checked Then
+                    If Val(TreeViewBills.Nodes(I).ImageKey) <> 1 Then
+                        MsgBox("Unable to produce POM." & vbCrLf & "The POM can be produced for the Bill status [Bill Created] only." & vbCrLf & "Please check the checked bills list and try again.", MsgBoxStyle.Exclamation)
+                        TreeViewBills.SelectedNode = TreeViewBills.Nodes(I)
+                        TreeViewBills.Nodes(I).EnsureVisible()
+                        Exit Sub
+                    End If
+                    ReDim Preserve BillID(Found)
+                    BillID(Found) = CType(TreeViewBills.Nodes(I).Tag, ValueDescription).Value
+                    Found = Found + 1
+                End If
+            Next
+            If Found = 0 Then
+                MsgBox("Unable to print Proof Of Mail. No bills checked in the Current Patient Bills list.", MsgBoxStyle.Critical)
+                TreeViewBills.Focus()
+                Exit Sub
+            End If
+            gSQLUpdateData("INSERT INTO POM (CreateBy) VALUES(" & gCurrentEmployee.EmpID & ")")
+            'Dim POMID As Long = gSQLGetSingleValue("SELECT MAX(POMID) from POM")
+            Dim POMID As Long = gSQLGetSingleValue("Select IDENT_CURRENT('POM')")
+
+            frmPOM.Setup_report(BillID, POMID)
+            frmPOM.MinimizeBox = False
+            frmPOM.MaximizeBox = False
+
+            frmPOM.ShowDialog(Me)
+            frmPOM.Dispose()
+            If MsgBox("The POM Registration Number has been generated." & vbCrLf & "Please confirm POM has been printed.", MsgBoxStyle.Question + MsgBoxStyle.YesNo) = MsgBoxResult.Yes Then
+                gSQLUpdateData("UPDATE BILLS SET BillStatusID=2, POMID=" & POMID & " WHERE BillID in (" & String.Join(", ", BillID) & ")")
+            Else
+                'gSQLUpdateData("DELETE FROM POM WHERE POMID=" & POMID)
+                'MsgBox("The POM Registration Number has been deleted." & vbCrLf & "If generated POM was printed, it should be destroyed.")
+            End If
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+        End Try
+    End Sub
+
+    Private Sub PrintEnvelopeToolStripMenuItem_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles PrintEnvelopeToolStripMenuItem.Click
+        Dim PatientID() As String = Nothing
+        Dim I As Integer = 0
+        Dim Found As Integer = 0
+        Try
+            If ListViewPatients.SelectedItems.Count = 0 Then
+                MsgBox("Unable to print  Envelope. No Patient selected.", MsgBoxStyle.Critical)
+                TreeViewBills.Focus()
+                Exit Sub
+            End If
+
+            ReDim Preserve PatientID(0)
+            PatientID(0) = Val(ListViewPatients.SelectedItems(0).Text)
+
+            frmBillingEnvelops.Setup_report(PatientID, 0, False)
+            frmBillingEnvelops.MinimizeBox = False
+            frmBillingEnvelops.MaximizeBox = False
+
+            frmBillingEnvelops.ShowDialog(Me)
+            frmBillingEnvelops.Dispose()
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+        End Try
+    End Sub
+
+    Private Sub PrintBillToolStripMenuItem_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles PrintBillToolStripMenuItem.Click
+        Dim BillID() As String = Nothing
+        Dim I As Integer = 0
+        Dim Found As Integer = 0
+        Dim SaveCaseType As Integer
+        Try
+            For I = 0 To TreeViewBills.Nodes.Count - 1
+                If TreeViewBills.Nodes(I).Checked Then
+                    If SaveCaseType <> 0 And SaveCaseType <> Val(CType(TreeViewBills.Nodes(I).Tag, ValueDescription).Fld1) Then
+                        MsgBox("Unable to produce bills. You have checked different case types bills." & vbCrLf & vbCrLf & "The different Case Type bills should be printed separately.", MsgBoxStyle.Exclamation)
+                        Exit Sub
+                    End If
+                    SaveCaseType = Val(CType(TreeViewBills.Nodes(I).Tag, ValueDescription).Fld1)
+                    ReDim Preserve BillID(Found)
+                    BillID(Found) = CType(TreeViewBills.Nodes(I).Tag, ValueDescription).Value
+                    Found = Found + 1
+                End If
+            Next
+            If Found = 0 Then
+                MsgBox("Unable to produce the NF3 report. No bills checked in the Current Patient Bills list.", MsgBoxStyle.Critical)
+                TreeViewBills.Focus()
+                Exit Sub
+            End If
+            frmNF3Report.Setup_report(BillID, SaveCaseType)
+            frmNF3Report.MinimizeBox = False
+
+            frmNF3Report.ShowDialog(Me)
+            frmNF3Report.Dispose()
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+        End Try
+    End Sub
+
+    Private Sub PrintLabelToolStripMenuItem_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles PrintLabelToolStripMenuItem.Click
+        Dim ID As Long
+        Try
+            If ListViewPatients.SelectedItems.Count = 0 Then
+                MsgBox("Unable to print the Patient's File Label. No patient selected.", MsgBoxStyle.Exclamation)
+                Exit Sub
+            End If
+
+            ID = ListViewPatients.SelectedItems(0).Tag
+            Cursor = Cursors.WaitCursor
+            Application.DoEvents()
+            Print_Label(ID)
+            Cursor = Cursors.Default
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+        End Try
+    End Sub
+
+    Private Sub Print_Label(ByVal PatientID As Long)
+        Dim intCounter As Integer
+        Dim CR As ReportDocument
+        Dim ConInfo As New TableLogOnInfo
+        Try
+            CR = New eMedicalOffice.rptPatientFileLabel
+
+            'gShowWait(True, PanelWait, Me)
+            'ConInfo.ConnectionInfo.UserID = gSQLServerUID
+            'ConInfo.ConnectionInfo.Password = gSQLServerPassword
+            'ConInfo.ConnectionInfo.ServerName = gSQLServerName
+            'ConInfo.ConnectionInfo.DatabaseName = gSQLServerDatabase
+            'For intCounter = 0 To CR.Database.Tables.Count - 1
+            '    CR.Database.Tables(intCounter).LogOnInfo.ConnectionInfo.UserID = gSQLServerUID
+            '    CR.Database.Tables(intCounter).LogOnInfo.ConnectionInfo.Password = gSQLServerPassword
+            '    CR.Database.Tables(intCounter).LogOnInfo.ConnectionInfo.ServerName = gSQLServerName
+            '    CR.Database.Tables(intCounter).LogOnInfo.ConnectionInfo.DatabaseName = gSQLServerDatabase
+            '    Application.DoEvents()
+            '    CR.Database.Tables(intCounter).ApplyLogOnInfo(ConInfo)
+            '    Application.DoEvents()
+            'Next
+            'CR.Refresh()
+            If SetupCrystalSecurityInfo(CR) = False Then Exit Sub
+            CR.SetParameterValue("PatientID", PatientID.ToString)
+            If gPrinterFileLabel <> "" Then CR.PrintOptions.PrinterName = gPrinterFileLabel
+            CR.PrintOptions.ApplyPageMargins(New PageMargins(0, 0, 0, 0))
+            CR.PrintToPrinter(1, False, 0, 0)
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+        End Try
+    End Sub
+
+    Private Sub ButtonTools_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ButtonTools.Click
+
+    End Sub
+
+    Private Sub ButtonTools_MouseDown(ByVal sender As Object, ByVal e As System.Windows.Forms.MouseEventArgs) Handles ButtonTools.MouseDown
+        ContextMenuStripBills.Show(ButtonTools, e.Location)
+    End Sub
+
+    Private Sub Button1_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Button1.Click
+        TimerDetails.Stop()
+        TimerLoad.Enabled = False
+        If Loading = False Then TimerLoad.Enabled = True
+    End Sub
+
+    Private Sub TreeViewBills_AfterCheck(ByVal sender As Object, ByVal e As System.Windows.Forms.TreeViewEventArgs) Handles TreeViewBills.AfterCheck
+
+    End Sub
+
+    Private Sub TreeViewBills_AfterSelect(ByVal sender As System.Object, ByVal e As System.Windows.Forms.TreeViewEventArgs) Handles TreeViewBills.AfterSelect
+
+    End Sub
+
+    Private Sub TreeViewBills_BeforeCheck(ByVal sender As Object, ByVal e As System.Windows.Forms.TreeViewCancelEventArgs) Handles TreeViewBills.BeforeCheck
+        If Not e.Node.Parent Is Nothing Then
+            e.Cancel = True
+        End If
+    End Sub
+
+    Private Sub ButtonAddComments_Click(ByVal sender As System.Object, ByVal e As System.EventArgs)
+
+        'frmAddComment.txtComments = TextBoxCommentView
+        'frmAddComment.ListViewComments = ListViewComments
+        'frmAddComment.PatientID = ListViewPatients.SelectedItems(0).Tag
+        'If frmAddComment.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+        '    ' Comments
+        'End If
+        'frmAddComment.Dispose()
+    End Sub
+
+    Private Sub ListViewComments_ColumnClick(ByVal sender As Object, ByVal e As System.Windows.Forms.ColumnClickEventArgs)
+        'Dim new_sorting_column As ColumnHeader = ListViewComments.Columns(e.Column)
+        '' Figure out the new sorting order.
+        'Dim sort_order As System.Windows.Forms.SortOrder
+        'If m_SortingColumnComments Is Nothing Then
+        '    ' New column. Sort ascending.
+        '    sort_order = SortOrder.Ascending
+        'Else
+        '    ' See if this is the same column.
+        '    If new_sorting_column.Equals(m_SortingColumnComments) Then
+        '        ' Same column. Switch the sort order.
+
+        '        'If m_SortingColumnComments.Text.StartsWith("> ") Then
+        '        'sort_order = SortOrder.Descending
+        '        'Else
+        '        'sort_order = SortOrder.Ascending
+        '        'End If
+        '        If m_SortingColumnComments.ImageKey = "SORT1" Then
+        '            sort_order = SortOrder.Descending
+        '        Else
+        '            sort_order = SortOrder.Ascending
+        '        End If
+        '    Else
+        '        ' New column. Sort ascending.
+        '        sort_order = SortOrder.Ascending
+        '    End If
+
+        '    ' Remove the old sort indicator.
+        '    'm_SortingColumnComments.Text =             m_SortingColumnComments.Text.Mid(2)
+        '    m_SortingColumnComments.ImageKey = "SORT0"
+        '    m_SortingColumnComments.ImageKey = "SORT0"
+        'End If
+
+        '' Display the new sort order.
+        'm_SortingColumnComments = new_sorting_column
+        ''If sort_order = SortOrder.Ascending Then
+        ''m_SortingColumnComments.Text = "> " & m_SortingColumnComments.Text
+        ''Else
+        ''m_SortingColumnComments.Text = "< " & m_SortingColumnComments.Text
+        ''End If
+        'If sort_order = SortOrder.Ascending Then
+        '    m_SortingColumnComments.ImageKey = "SORT1"
+        'Else
+        '    m_SortingColumnComments.ImageKey = "SORT2"
+        'End If
+
+        '' Create a comparer.
+        'ListViewComments.ListViewItemSorter = New  _
+        '    ListViewComparer(e.Column, sort_order)
+
+        '' Sort.
+    End Sub
+
+    Private Sub ListViewComments_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs)
+        'If ListViewComments.SelectedItems.Count = 0 Then Exit Sub
+        'TextBoxCommentView.Text = ListViewComments.SelectedItems(0).SubItems(1).Text
+    End Sub
+
+    Private Sub ToolStripMenuItem2_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ToolStripMenuItem2.Click
+        Dim N As TreeNode
+        Dim BillID As Long
+        N = TreeViewBills.SelectedNode
+        If N Is Nothing Then
+            MsgBox("Unable to print. No bill selected.", MsgBoxStyle.Exclamation)
+        End If
+ReCheck:
+        If Not N.Parent Is Nothing Then
+            N = N.Parent
+            GoTo ReCheck
+        End If
+        BillID = CType(N.Tag, ValueDescription).Value
+        Print_Readings(BillID)
+    End Sub
+
+    Private Sub TreeViewBill_NodeMouseDoubleClick(ByVal sender As Object, ByVal e As System.Windows.Forms.TreeNodeMouseClickEventArgs) Handles TreeViewBill.NodeMouseDoubleClick
+        Dim Node As TreeNode = Nothing
+        Dim ParentNode As TreeNode = Nothing
+        Node = TreeViewBill.SelectedNode
+        If Node Is Nothing Then
+            MsgBox("Unable to remove. No Diagnose selected", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        'Node.ExpandAll()
+        If Node.Parent Is Nothing Then
+            If MsgBox("Please confirm you want to remove the procedure: " & vbCrLf & Node.Text & vbCrLf & "from the current bill?", MsgBoxStyle.Question + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                Exit Sub
+            End If
+        Else
+            If MsgBox("Please confirm you want to remove the diagnose: " & vbCrLf & Node.Text & vbCrLf & "from the current bill?", MsgBoxStyle.Question + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                Exit Sub
+            End If
+        End If
+
+        LockWindowUpdate(TreeViewBill.Handle)
+        If Node Is Nothing Then
+            Exit Sub
+        End If
+        If Node.Parent Is Nothing Then
+            TreeViewBill.Nodes.Remove(Node)
+        Else
+            ParentNode = Node.Parent
+            If ParentNode.Nodes.Count > 1 Then
+                TreeViewBill.Nodes.Remove(Node)
+            Else
+                TreeViewBill.Nodes.Remove(Node)
+                TreeViewBill.Nodes.Remove(ParentNode)
+            End If
+        End If
+        LockWindowUpdate(0)
+        Calculate_BillTotoals()
+    End Sub
+
+    Private Sub TreeViewBill_AfterSelect(ByVal sender As System.Object, ByVal e As System.Windows.Forms.TreeViewEventArgs) Handles TreeViewBill.AfterSelect
+
+    End Sub
+
+    Private Sub TreeViewBill_DoubleClick(ByVal sender As Object, ByVal e As System.EventArgs) Handles TreeViewBill.DoubleClick
+
+    End Sub
+
+    Private Sub ToolStripMenuItem3_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ToolStripMenuItem3.Click
+        gHighlightListviewItem(ListViewPatients, True, False)
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            LabelPatient.Text = ""
+        Else
+            LabelPatient.Text = ListViewPatients.SelectedItems(0).SubItems(1).Text.ToUpper & "        PROCEDURE AGE: " & ListViewPatients.SelectedItems(0).SubItems(2).Text & " DAYS"
+            If ListViewPatients.SelectedItems(0).ForeColor = Color.Red Then
+                LabelPatient.ForeColor = Color.Red
+            Else
+                LabelPatient.ForeColor = Color.Black
+            End If
+        End If
+        Validate_Billing_Data(True)
+        KeepBill = True
+        TimerDetails_Tick(Nothing, Nothing)
+        KeepBill = False
+
+    End Sub
+
+    Private Sub ListViewProceduresAll_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ListViewProceduresAll.SelectedIndexChanged
+        gHighlightListviewItem(ListViewProceduresAll, True)
+    End Sub
+
+    Private Sub TextBoxReading_MouseDoubleClick(ByVal sender As Object, ByVal e As System.Windows.Forms.MouseEventArgs) Handles TextBoxReading.MouseDoubleClick
+        Dim SStart As Integer
+        Dim SLength As Integer
+        Dim SelectedText As String
+        If TextBoxReading.Text.Trim.Length < 20 Then Exit Sub
+        If e.Button = Windows.Forms.MouseButtons.Left Then
+            SkeepLoad = True
+            SStart = TextBoxReading.SelectionStart
+            SLength = TextBoxReading.SelectionLength
+            If SLength = 0 Then Exit Sub
+            If ComboBoxDiagnosisFilter.SelectedIndex > 1 Then
+                ComboBoxDiagnosisFilter.SelectedIndex = 1
+            End If
+            SelectedText = TextBoxReading.Text.Mid(SStart + 1, SLength).Trim
+            SelectedText = Replace(SelectedText, ".", "")
+            SelectedText = Replace(SelectedText, ",", "")
+            SelectedText = Replace(SelectedText, "/", "")
+            SelectedText = Replace(SelectedText, "\", "")
+            TextBoxCode.Text = ""
+            SkeepLoad = False
+            TextBoxCode.Text = SelectedText
+        End If
+    End Sub
+
+    Private Sub TextBoxReading_TextChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles TextBoxReading.TextChanged
+
+    End Sub
+
+    Private Sub ComboBoxBillingDays_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ComboBoxBillingDays.SelectedIndexChanged
+        If ComboBoxBillingDays.SelectedIndex = -1 Then Exit Sub
+        TimerDetails.Stop()
+        TimerLoad.Enabled = False
+        If Loading = False Then TimerLoad.Enabled = True
+    End Sub
+
+    Private Sub Button2_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Button2.Click
+        ComboBoxBillingDays.SelectedIndex = gBillingMinDays - 1
+    End Sub
+
+    Private Sub ToolStripButton4_Click_1(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ToolStripButton4.Click
+        Application.DoEvents()
+        frmBillingTemplates.MinimizeBox = False
+        frmBillingTemplates.MaximizeBox = False
+
+        If frmBillingTemplates.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+            Load_Filters()
+        End If
+        frmBillingTemplates.Dispose()
+    End Sub
+
+    Private Sub ToolStripButtonAOB_Click(ByVal sender As System.Object, ByVal e As System.EventArgs)
+        If gScannerMode = 1 Then
+            ScanDocumentFromScannerApplication(6)
+        Else
+            ScanDocumentFromScanner(6)
+        End If
+    End Sub
+
+    Private Sub ButtonDeleteDocument_Click(ByVal sender As System.Object, ByVal e As System.EventArgs)
+        Dim LI As ListViewItem
+        Dim Sql As String
+        Dim ApprovedByName As String
+        Dim ApprovedByID As Long
+        If ListViewPatients.SelectedItems.Count = 0 Then Exit Sub
+        If ListViewDocs.SelectedItems.Count = 0 Then Exit Sub
+        LI = ListViewDocs.SelectedItems(0)
+        If OpMode <> AddEditMode.AddNew Then
+            If gCurrentEmployee.PositionID > 3 Then
+                frmSupervisorApproval.LabelMsg.Text = "Delete Document: " & LI.Text
+                If frmSupervisorApproval.ShowDialog <> Windows.Forms.DialogResult.OK Then
+                    frmSupervisorApproval.Dispose()
+                    Exit Sub
+                End If
+                ApprovedByID = frmSupervisorApproval.SupervisorID
+                ApprovedByName = frmSupervisorApproval.SupervisorName
+                frmSupervisorApproval.Dispose()
+            Else
+                If MsgBox("Please confirm you want to delete " & LI.Text & "?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo, "Supervisor Approval") = MsgBoxResult.No Then
+                    Exit Sub
+                End If
+                ApprovedByID = gCurrentEmployee.EmpID
+                ApprovedByName = gCurrentEmployee.FName & " " & gCurrentEmployee.LName
+            End If
+            gUpdate_Profile_Log(ListViewPatients.SelectedItems(0).Tag, PatientLogTypes.tDocumentDeleted, LI.Text, ApprovedByName)
+        End If
+        Sql = "DELETE FROM Documents Where DocumentID=" & LI.Tag
+        gSQLDeleteRecord(Sql)
+        Dim SaveIndex As Integer = LI.Index
+        ListViewDocs.Items.Remove(LI)
+        pdfViewer.Visible = True
+        pdfViewer.CloseDocument()
+        If ListViewDocs.Items.Count > 0 Then
+            If ListViewDocs.Items.Count > SaveIndex Then
+                ListViewDocs.Items(SaveIndex).Selected = True
+                ListViewDocs.Items(SaveIndex).EnsureVisible()
+            Else
+                ListViewDocs.Items(SaveIndex - 1).Selected = True
+                ListViewDocs.Items(SaveIndex - 1).EnsureVisible()
+            End If
+        End If
+    End Sub
+
+    Private Sub cboInsuranceCompanyID_KeyUp(ByVal sender As Object, ByVal e As System.Windows.Forms.KeyEventArgs) Handles cboInsuranceCompanyID.KeyUp
+        gComboboxAutoComplete(cboInsuranceCompanyID, e, True)
+    End Sub
+
+    Private Sub cboInsuranceCompanyID_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cboInsuranceCompanyID.SelectedIndexChanged
+        If cboInsuranceCompanyID.SelectedIndex > -1 Then
+            If CType(cboInsuranceCompanyID.SelectedItem, ValueDescription).Value = -1 Then
+                cboInsuranceCompanyID.SelectedIndex = 0
+                Exit Sub
+            End If
+        End If
+        TimerDetails.Stop()
+        TimerLoad.Enabled = False
+        If Loading = False Then TimerLoad.Enabled = True
+
+    End Sub
+
+    Private Sub ShowAccidentRelatedPatientsToolStripMenuItem_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ShowAccidentRelatedPatientsToolStripMenuItem.Click
+        Dim ID As Long
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            MsgBox("Unable to show Accident related Patients. No Patient selected.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        ID = ListViewPatients.SelectedItems(0).Tag
+        frmAccidentPatients.PatientID = ID
+        frmAccidentPatients.DOA = lblDOA.Text
+        frmAccidentPatients.PolicyNumber = lblPolicyNumber.Text
+        If Val(lblInsuranceCompanyID.Tag) <> 0 Then
+            frmAccidentPatients.InsuranceCompanyID = Val(lblInsuranceCompanyID.Tag)
+        End If
+        frmAccidentPatients.lblPatient.Text = ListViewPatients.SelectedItems(0).SubItems(1).Text.ToUpper
+        frmAccidentPatients.lblPatient1.Text = "INSURANCE: " & lblInsuranceCompanyID.Text
+        frmAccidentPatients.lblPatient2.Text = UCase(IIf(lblClaimNumber.Text <> "", "POLICY #:" & lblPolicyNumber.Text, "") & IIf(lblClaimNumber.Text <> "", "   CLAIM#:" & lblClaimNumber.Text, "") & IIf(lblDOA.Text <> "", "   DOA:" & lblDOA.Text, ""))
+        frmAccidentPatients.Load_Data()
+        frmAccidentPatients.Show(Me)
+    End Sub
+
+    Private Sub ToolStripButtonSaveAs_Click_1(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ToolStripButtonSaveAs.Click
+        Dim Fname As String
+        If ListViewDocs.SelectedItems.Count = 0 Then
+            MsgBox("Unable to Save. No document selected.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+
+        If System.IO.File.Exists(pdfViewer.Tag) = False Then
+            MsgBox("Unexpected Error. Unable to save file. Please select a document and try again.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+
+        If pdfViewer.Tag.ToString().Right(3).ToUpper() = "PDF" Then  ' To keep compatible with previous JPG file versions
+            SaveFileDialog1.Filter = "Adobe Acrobat File (*.pdf)|*.pdf"
+            SaveFileDialog1.DefaultExt = "pdf"
+            Fname = ListViewDocs.SelectedItems(0).Text & " " & ListViewPatients.SelectedItems(0).Text & ".pdf"
+        Else
+            SaveFileDialog1.Filter = "JPEG FIle (*.jpg)|*.jpg"
+            SaveFileDialog1.DefaultExt = "jpg"
+            Fname = ListViewDocs.SelectedItems(0).Text & " " & ListViewPatients.SelectedItems(0).Text & ".jpg"
+        End If
+        Fname = gFixFileName(Fname)
+        SaveFileDialog1.FileName = Fname
+        If SaveFileDialog1.ShowDialog = Windows.Forms.DialogResult.OK Then
+            Try
+                If pdfViewer.Tag.ToString().Right(3).ToUpper() = "PDF" Then
+                    IO.File.Copy(pdfViewer.Tag, SaveFileDialog1.FileName)
+                Else
+                    Image.FromFile(pdfViewer.Tag).Save(SaveFileDialog1.FileName)
+                End If
+            Catch ex As Exception
+                TopMost = False
+                MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+                log.Error(ex.Message, ex)
+            End Try
+
+            Dim P As New ProcessStartInfo()
+            With P
+                .FileName = SaveFileDialog1.FileName
+                .UseShellExecute = True
+            End With
+            Process.Start(P)
+        End If
+    End Sub
+
+    Private Sub ToolStripButtonEmail_Click_1(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ToolStripButtonEmail.Click
+        Dim MessageFrom As String = gOfficeEmail
+        Dim Msg As New SendFileTo
+        Dim Subject As String
+        If ListViewDocs.SelectedItems.Count = 0 Then
+            MsgBox("Unable to send email. No document selected.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+
+        If ListViewPatients.SelectedItems.Count > 0 And OpMode <> AddEditMode.AddNew Then
+            Subject = "Message From " & gOfficeName & " / Patient: " & ListViewPatients.SelectedItems(0).SubItems(1).Text
+        Else
+            Subject = "Message From " & gOfficeName
+        End If
+        If ListViewDocs.SelectedItems.Count > 0 Then
+            Subject &= " / Attached: " & ListViewDocs.SelectedItems(0).Text
+        End If
+
+        Try
+            Msg.SendMail(pdfViewer.Tag.ToString(), Subject, Subject)
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+        End Try
+
+    End Sub
+
+    Private Sub ToolStripButton3_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ToolStripButton3.Click
+        With frmDocumentPreview
+            frmDocumentPreview.TextBoxReading.Visible = False
+            .pdfViewer.Visible = True
+            .pdfViewer.Dock = DockStyle.Fill
+            .pdfViewer.LoadDocument(pdfViewer.Tag.ToString())
+            .MinimizeBox = False
+            .MaximizeBox = False
+
+            .ShowDialog(Me)
+        End With
+
+        frmDocumentPreview.Dispose()
+    End Sub
+
+    Private Sub ToolStripButton2_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ToolStripButton2.Click
+        Dim p = pdfViewer.Document.CreatePrintDocument
+        PrintDialog1.Document = p
+        PrintDialog1.PrinterSettings = p.PrinterSettings
+        PrintDialog1.AllowSomePages = True
+        PrintDialog1.AllowPrintToFile = True
+        PrintDialog1.UseEXDialog = False
+        If PrintDialog1.ShowDialog(Me) = DialogResult.OK Then
+            Dim printPrvDlg As PrintPreviewDialog = New PrintPreviewDialog()
+            p.PrinterSettings = PrintDialog1.PrinterSettings
+            printPrvDlg.Document = p
+            printPrvDlg.StartPosition = FormStartPosition.CenterParent
+            printPrvDlg.Width = 500
+            printPrvDlg.Height = 600
+            If printPrvDlg.ShowDialog(Me) = DialogResult.OK Then
+                p.Print()
+            End If
+        End If
+        'pdfViewer.PrintDocument(me)
+    End Sub
+
+    Private Sub ScanDocumentFromScanner(ByVal DocProfileID As Integer)
+        Dim PatientID As Long
+
+        If ListViewPatients.SelectedItems.Count > 0 And OpMode = AddEditMode.None Then
+            'cmdEdit_Click(Nothing, Nothing)
+            PatientID = ListViewPatients.SelectedItems(0).Tag
+        ElseIf OpMode = AddEditMode.None Then
+            cmdAddNew_Click(Nothing, Nothing)
+            PatientID = 0
+            PatientID = ListViewPatients.SelectedItems(0).Tag
+        End If
+        If ListViewPatients.SelectedItems.Count > 0 Then PatientID = ListViewPatients.SelectedItems(0).Tag
+
+        frmDocumentScannerPDF.IniDocProfile = DocProfileID
+        frmDocumentScannerPDF.PatientID = PatientID
+        frmDocumentScannerPDF.LoadListView = ListViewDocs
+        frmDocumentScannerPDF.MinimizeBox = False
+        frmDocumentScannerPDF.MaximizeBox = False
+
+        If frmDocumentScannerPDF.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+            If OpMode = AddEditMode.None And ListViewPatients.SelectedItems.Count > 0 Then
+                gSQLUpdateData("UPDATE Documents set PatientID = " & ListViewPatients.SelectedItems(0).Tag & " where PatientID=0 and InsertedBy=" & gCurrentEmployee.EmpID)
+            End If
+        End If
+        frmDocumentScannerPDF.Dispose()
+    End Sub
+
+    Private Sub ScanDocumentFromScannerApplication(ByVal DocProfileID As Integer)
+        Dim PatientID As Long
+
+        If ListViewPatients.SelectedItems.Count > 0 And OpMode = AddEditMode.None Then
+            'cmdEdit_Click(Nothing, Nothing)
+            PatientID = ListViewPatients.SelectedItems(0).Tag
+        ElseIf OpMode = AddEditMode.None Then
+            cmdAddNew_Click(Nothing, Nothing)
+            PatientID = 0
+            PatientID = ListViewPatients.SelectedItems(0).Tag
+        End If
+        If ListViewPatients.SelectedItems.Count > 0 Then PatientID = ListViewPatients.SelectedItems(0).Tag
+        If gScannerFolder = "" Then
+            MsgBox("Unable to scan. The Scanner Folder has not been specified." & vbCrLf & "Please call your system administrator.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        If IO.Directory.Exists(gScannerFolder) = False Then
+            MsgBox("Unable to scan. Invalid Scanner Folder specified." & vbCrLf & "Please call your system administrator.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        frmDocumentScannerExternalProgram.IniDocProfile = DocProfileID
+        frmDocumentScannerExternalProgram.PatientID = PatientID
+        frmDocumentScannerExternalProgram.LoadListView = ListViewDocs
+        frmDocumentScannerExternalProgram.MinimizeBox = False
+        frmDocumentScannerExternalProgram.MaximizeBox = False
+
+        If frmDocumentScannerExternalProgram.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+            If OpMode = AddEditMode.None And ListViewPatients.SelectedItems.Count > 0 Then
+                gSQLUpdateData("UPDATE Documents set PatientID = " & ListViewPatients.SelectedItems(0).Tag & " where PatientID=0 and InsertedBy=" & gCurrentEmployee.EmpID)
+            End If
+
+        End If
+        frmDocumentScannerExternalProgram.Dispose()
+    End Sub
+
+    Private Sub ToolStripButton5_Click(ByVal sender As System.Object, ByVal e As System.EventArgs)
+        SetFont(1)
+    End Sub
+
+    Private Sub SetFont(Optional incr As Integer = 0)
+        Dim BaseSize = 8
+        If BaseSize + My.Settings.FontSize + incr < 8 Or BaseSize + My.Settings.FontSize + incr > 15 Then Return
+        My.Settings.FontSize = My.Settings.FontSize + incr
+        My.Settings.Save()
+        Dim F = New Font(Font.FontFamily, BaseSize + My.Settings.FontSize, FontStyle.Regular)
+        ListViewPatients.Font = F
+        TreeViewBills.Font = F
+        ListViewProcedures.Font = F
+        ListViewDiagnosis.Font = F
+        TreeViewBill.Font = F
+        ListViewProceduresAll.Font = F
+        TextBoxReading.Font = F
+        ListViewDocs.Font = F
+        ToolStripAutoResize_Click(Nothing, Nothing)
+    End Sub
+
+    Private Sub ToolStripButton6_Click(ByVal sender As System.Object, ByVal e As System.EventArgs)
+        SetFont(-1)
+    End Sub
+
+    Private Sub lblLocked_Click(ByVal sender As System.Object, ByVal e As System.EventArgs)
+
+    End Sub
+
+    Private Sub Label42_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Label42.Click
+
+    End Sub
+
+    Private Sub ToolStripButton7_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ToolStripButton7.Click
+        Dim MessageFrom As String = gOfficeEmail
+        Dim Msg As New SendFileTo
+        Dim Fname As String
+        Dim Subject As String
+        If pdfViewer.Tag = "" Then
+            MsgBox("Unable to process your request. No Document Loaded.")
+        End If
+        Subject = "Attached: Document"
+        Fname = pdfViewer.Tag
+        Try
+            gFax(Me, "", "Attached: Document", Fname, gOfficeFax)
+        Catch ex As Exception
+            TopMost = False
+            MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+            log.Error(ex.Message, ex)
+        End Try
+    End Sub
+
+    Private Sub DoNotBillSelectedProcedureToolStripMenuItem_Click(ByVal sender As System.Object, ByVal e As EventArgs) Handles DoNotBillSelectedProcedureToolStripMenuItem.Click
+        Dim ApprovedByID As Integer
+        Dim ApprovedByName As String
+        Dim LI As ListViewItem
+        Dim Comments As String
+        If ListViewProcedures.SelectedItems.Count = 0 Then
+            MsgBox("Unable to process your request." & vbCrLf & "No Patient's Procedure selected.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+
+        LI = ListViewProcedures.SelectedItems(0)
+        If gCurrentEmployee.PositionID > 3 Then
+            frmSupervisorApproval.LabelMsg.Text = "Procedure Do Not Bill Requested: " & vbCrLf & LI.SubItems(1).Text
+            If frmSupervisorApproval.ShowDialog <> Windows.Forms.DialogResult.OK Then
+                frmSupervisorApproval.Dispose()
+                Exit Sub
+            End If
+            ApprovedByID = frmSupervisorApproval.SupervisorID
+            ApprovedByName = frmSupervisorApproval.SupervisorName
+            frmSupervisorApproval.Dispose()
+        Else
+            If MsgBox("Procedure Do Not Bill Requested: " & vbCrLf & LI.SubItems(1).Text & vbCrLf & "Please Confirm...", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo, "Supervisor Approval") = MsgBoxResult.No Then
+                Exit Sub
+            End If
+            ApprovedByID = gCurrentEmployee.EmpID
+            ApprovedByName = gCurrentEmployee.FName & " " & gCurrentEmployee.LName
+        End If
+        frmBillingProcedureDoNotBill.LabelProcedure.Text = LI.SubItems(1).Text
+        frmBillingProcedureDoNotBill.PatientID = ListViewPatients.SelectedItems(0).Tag
+        frmBillingProcedureDoNotBill.ProcID = LI.Tag
+        frmBillingProcedureDoNotBill.PatientProcedureID = Val(LI.SubItems(1).Tag)
+        frmBillingProcedureDoNotBill.ApprovedByName = ApprovedByName
+        frmBillingProcedureDoNotBill.MinimizeBox = False
+        frmBillingProcedureDoNotBill.MaximizeBox = False
+
+        If frmBillingProcedureDoNotBill.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+            Load_PatientProcedures()
+        End If
+        frmBillingProcedureDoNotBill.Dispose()
+    End Sub
+
+    Private Sub Button3_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Button3.Click
+        ToolStripMenuItem1_Click(Nothing, Nothing)
+    End Sub
+
+    Private Sub ContextMenuStripPatientProcedures_Opening(ByVal sender As System.Object, ByVal e As System.ComponentModel.CancelEventArgs) Handles ContextMenuStripPatientProcedures.Opening
+        If ListViewProcedures.SelectedItems.Count = 0 Then
+            e.Cancel = True
+        End If
+        If ListViewProcedures.SelectedItems(0).SubItems(4).Text <> "" Then
+            e.Cancel = True
+        End If
+    End Sub
+
+    Private Sub ReplaceProcedureTeoolStripMenuItem_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ReplaceProcedureTeoolStripMenuItem.Click
+        'Dim ApprovedByID As Integer
+        'Dim ApprovedByName As String
+        'Dim ProcCode As String
+        'Dim LI As ListViewItem
+        'Dim Comments As String
+        'If ListViewProcedures.SelectedItems.Count = 0 Then
+        '    MsgBox("Unable to process your request." & vbCrLf & "No Patient's Procedure selected.", MsgBoxStyle.Exclamation)
+        '    Exit Sub
+        'End If
+
+        'LI = ListViewProcedures.SelectedItems(0)
+        'frmBillingProcedureCHange.CalledForm = Me
+        'frmBillingProcedureCHange.ProcedureName = LI.SubItems(1).Text
+        'frmBillingProcedureCHange.PatientID = ListViewPatients.SelectedItems(0).Tag
+        'frmBillingProcedureCHange.ProcID = LI.Tag
+        'If AdminAuthorizedByName <> "" Then
+        '    frmBillingProcedureCHange.CheckBoxKeepAuthorized.Checked = True
+        '    frmBillingProcedureCHange.txtUserName.Enabled = False
+        '    frmBillingProcedureCHange.txtPassword.Enabled = False
+        '    frmBillingProcedureCHange.PictureBox4.Visible = False
+        'End If
+        'frmBillingProcedureCHange.DiagID = gSQLGetSingleValue("select DiagID from Procedures Where ProcID=" & LI.Tag)
+        'frmBillingProcedureCHange.ForBillingOnly = gSQLGetSingleValue("select ForBillingOnly from Procedures Where ProcID=" & LI.Tag)
+        'frmBillingProcedureCHange.LabelProcedure.Text = LI.SubItems(1).Text
+        'frmBillingProcedureCHange.PatientProcedureID = Val(LI.SubItems(1).Tag)
+        'frmBillingProcedureCHange.MinimizeBox = False
+        'frmBillingProcedureCHange.MaximizeBox = False
+
+        'If frmBillingProcedureCHange.ShowDialog(Me) = Windows.Forms.DialogResult.OK Then
+        '    Load_PatientProcedures()
+        'End If
+        'frmBillingProcedureCHange.Dispose()
+        If ListViewProcedures.SelectedItems.Count = 0 Then
+            MsgBox("Unable to process your request." & vbCrLf & "No procedure selected.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        Dim LI As ListViewItem
+        LI = ListViewProcedures.SelectedItems(0)
+        If LI.SubItems(4).Text <> "" Then
+            MsgBox("Unable to replace selected procedure." & vbCrLf & "This procedure is assigned to the bill #: " & LI.SubItems(4).Text, MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+
+        Dim frm As frmReplaceProcedure = New frmReplaceProcedure
+        frm.LabelProcedure.Text = LI.SubItems(1).Text.ToUpper
+
+        frm.CaseType = Val(lblCaseTypeID.Tag)
+        frm.PatientID = Val(lblPatientID.Text)
+        frm.PatientProcedureID = Val(LI.SubItems(0).Tag)
+        frm.OldProcName = LI.SubItems(1).Text
+        frm.OldProcId = Val(LI.Tag)
+        frm.CalledListViewProcedures = ListViewProcedures
+        frm.CalledFrom = "Billing"
+        frm.ShowDialog(Me)
+        frm.Dispose()
+        frm = Nothing
+    End Sub
+
+    Private Sub txtAmt1_TextChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles txtAmt1.TextChanged
+
+    End Sub
+
+    Private Sub ToolStrip3_ItemClicked(ByVal sender As System.Object, ByVal e As System.Windows.Forms.ToolStripItemClickedEventArgs) Handles ToolStrip3.ItemClicked
+
+    End Sub
+
+    Private Sub ToolStripButton13_Click(sender As Object, e As EventArgs)
+
+    End Sub
+
+    Private Sub ToolStripFonrDecrease_Click(sender As Object, e As EventArgs) Handles ToolStripFonrDecrease.Click
+        SetFont(-1)
+    End Sub
+
+    Private Sub ToolStripFontIncrease_Click(sender As Object, e As EventArgs) Handles ToolStripFontIncrease.Click
+        SetFont(1)
+    End Sub
+
+    Private Sub ToolStripAutoResize_Click(sender As Object, e As EventArgs) Handles ToolStripAutoResize.Click
+        gListViewRestoreDefaultColumnWidth(ListViewPatients)
+        gListViewRestoreDefaultColumnWidth(ListViewProcedures)
+
+        gListViewRestoreDefaultColumnWidth(ListViewProceduresAll)
+        gListViewRestoreDefaultColumnWidth(ListViewPatients)
+    End Sub
+
+    Private Sub Panel6_Paint(sender As Object, e As PaintEventArgs) Handles Panel6.Paint
+
+    End Sub
+
+End Class

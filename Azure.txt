@@ -1,0 +1,22 @@
+Name	nmtmquui5c
+Subscription ID	52982c2b-1280-412c-9467-6c1493202ef2
+Administrator Login	emedicalofficesa
+Pwd: Koloal1966
+Fully Qualified DNS Name	nmtmquui5c.database.windows.net
+Region	South Central US
+State	Ready
+Database Quota	150
+Database Count	1
+Manage Url	https://nmtmquui5c.database.windows.net
+
+
+
+Login:
+Server: nmtmquui5c.database.windows.net
+emedicalofficesa@nmtmquui5c
+Koloal1966
+
+
+
+192.168.1.110
+emedicaloffice

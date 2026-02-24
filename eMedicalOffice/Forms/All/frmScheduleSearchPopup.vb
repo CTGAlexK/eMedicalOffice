@@ -1,0 +1,829 @@
+﻿Imports System.Reflection
+Imports log4net
+
+Public Class frmScheduleSearchPopup
+    Private log As ILog = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType)
+    Public CalledForm As Form
+    Public CalledSpread As FarPoint.Win.Spread.FpSpread
+    Public SchDiagID As Long
+    Public SchDiagName As String
+    Public SchActiveCell As FarPoint.Win.Spread.Cell
+    Public ReturnSchPickupTransportation As Integer
+    Public ReturnSchDestinationTransportation As Integer
+    Public ReturnSchPickupTransportationOther As String
+    Public ReturnSchDestinationTransportationOther As String
+
+    Public SchH As Integer
+    Public SchM As Integer
+    Public SchAM As String
+    Public SchDate As String
+    Public SchID As Long
+    Private DOAVerification As Boolean
+    Private EFFDTVerification As Boolean
+    Private EFFDT As String
+    Private DOAAge As Integer
+
+    Private Sub ScheduleSearchPopup_Activated(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.Activated
+
+    End Sub
+
+    Private Sub TextBox1_KeyDown(ByVal sender As Object, ByVal e As System.Windows.Forms.KeyEventArgs) Handles TextBoxSearch.KeyDown
+        If e.KeyCode = 40 Then
+            If ListViewPatients.SelectedItems.Count > 0 Then
+                ListViewPatients.Focus()
+                Exit Sub
+            End If
+        End If
+    End Sub
+
+    Private Sub TextBox1_TextChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles TextBoxSearch.TextChanged
+        Timer1.Stop()
+        Timer1.Enabled = False
+        Timer1.Enabled = True
+        Timer1.Start()
+    End Sub
+
+    Public Sub Find_Patients()
+        Dim SQL As String
+        Dim Reader As SqlClient.SqlDataReader
+        Dim LI As ListViewItem
+        Dim PName
+        Label2.Text = ""
+        ListViewPatients.Items.Clear()
+        'If IsNumeric(TextBoxSearch.Text) Then
+        '    SQL = "SELECT PatientID, Fname, MI, LName, NoMoreAppointmentsInd FROM Patients WHERE PatientID = " & Val(TextBoxSearch.Text) & " and CaseStatusID=1 and OfficeID = " & gOfficeID
+        'Else
+        '    SQL = "SELECT PatientID, Fname, MI, LName, NoMoreAppointmentsInd FROM Patients WHERE (Lname like '" & RBC(TextBoxSearch.Text) & "%'  or Fname like '" & RBC(TextBoxSearch.Text) & "%' )and CaseStatusID=1 and OfficeID = " & gOfficeID
+        'End If
+        SQL = "SELECT PatientID, Fname, MI, LName, NoMoreAppointmentsInd FROM Patients Where Patients.OfficeID = " & gOfficeID & " AND CaseStatusID=1 "
+        If TextBoxSearch.Text.Trim <> "" Then
+            If IsNumeric(TextBoxSearch.Text) Then
+                SQL &= " AND Patients.PatientID = " & Val(TextBoxSearch.Text.Trim) & " "
+            Else
+                PName = Split(TextBoxSearch.Text.Trim.ToSafeSQLString(), " ")
+                Select Case PName.Length
+                    Case 1
+                        If PName(0).Trim = "*" Then PName(0) = ""
+                        SQL &= " and (Patients.FName Like '" & PName(0).Trim & "%' or Patients.LName Like '" & PName(0) & "%') "
+                    Case 2
+                        SQL &= " and ("
+                        SQL &= " (Patients.FName Like '" & PName(0).Trim & "%' and Patients.LName Like '" & PName(1).Trim & "%') "
+                        SQL &= " OR (Patients.FName Like '" & PName(1).Trim & "%' and Patients.LName Like '" & PName(0).Trim & "%')"
+                        SQL &= " )"
+                    Case 3
+                        SQL &= " and ("
+                        SQL &= " (Patients.FName Like '" & PName(0).Trim & "%' and Patients.MI Like '" & PName(1).Trim & "%' and  Patients.LName Like '" & PName(2).Trim & "%') "
+                        SQL &= " OR (Patients.FName Like '" & PName(1).Trim & "%' and Patients.MI Like '" & PName(2).Trim & "%' and  Patients.LName Like '" & PName(0).Trim & "%') "
+                        SQL &= " OR (Patients.FName Like '" & PName(2).Trim & "%' and Patients.MI Like '" & PName(0).Trim & "%' and  Patients.LName Like '" & PName(1).Trim & "%') "
+                        SQL &= " OR (Patients.FName Like '" & PName(2).Trim & "%' and Patients.MI Like '" & PName(1).Trim & "%' and  Patients.LName Like '" & PName(0).Trim & "%') "
+                        SQL &= " OR (Patients.FName Like '" & PName(1).Trim & "%' and Patients.MI Like '" & PName(0).Trim & "%' and  Patients.LName Like '" & PName(2).Trim & "%') "
+                        SQL &= " OR (Patients.FName Like '" & PName(0).Trim & "%' and Patients.MI Like '" & PName(2).Trim & "%' and  Patients.LName Like '" & PName(1).Trim & "%') "
+
+                        SQL &= " )"
+                End Select
+            End If
+        End If
+
+        Try
+            Reader = gSQLGetDataReader(SQL)
+            Do Until Reader.Read = False
+                LI = ListViewPatients.Items.Add(Reader("Fname").ToString & " " & IIf(Reader("MI").ToString <> "", Reader("MI").ToString & " ", "").ToString & Reader("Lname").ToString)
+                LI.Tag = "" & Reader("PatientID").ToString
+                If Val(Reader("NoMoreAppointmentsInd").ToString) > 0 Then
+                    LI.ForeColor = Color.Red
+                End If
+            Loop
+            If ListViewPatients.Items.Count > 0 Then
+                ListViewPatients.Items(0).Selected = True
+                ListViewPatients.Items(0).EnsureVisible()
+                BtnOk.Enabled = True
+            Else
+                BtnOk.Enabled = False
+                Clear_Details()
+            End If
+            cmdAddProcedure.Enabled = True
+            Button1.Enabled = True
+
+            If Val(FpSpreadDetails_Sheet1.Cells(0, 0).Tag) = 1 Then
+                Label2.Text = "No More Appointments Allowed!"
+                BtnOk.Enabled = False
+                cmdAddProcedure.Enabled = False
+                Button1.Enabled = False
+            ElseIf Val(FpSpreadDetails_Sheet1.Cells(0, 0).Tag) = 2 Then
+                Label2.Text = "Attention! Too Many Cancelations / Reschedules"
+            End If
+        Catch ex As Exception
+            log.Error(ex)
+        End Try
+    End Sub
+
+    Public Sub Find_Patient(ByVal ID)
+        Dim SQL As String
+        Dim Reader As SqlClient.SqlDataReader
+        Dim LI As ListViewItem
+        Clear_Details()
+        ListViewPatients.Items.Clear()
+        SQL = "SELECT PatientID, Fname, MI, LName, NoMoreAppointmentsInd FROM Patients WHERE PatientID = " & ID
+        Reader = gSQLGetDataReader(SQL)
+
+        Do Until Reader.Read = False
+            LI = ListViewPatients.Items.Add(Reader("Fname").ToString & " " & IIf(Reader("MI").ToString <> "", Reader("MI").ToString & " ", "").ToString & Reader("Lname").ToString)
+            LI.Tag = "" & Reader("PatientID").ToString
+            If Val(Reader("NoMoreAppointmentsInd").ToString) > 0 Then
+                LI.ForeColor = Color.Red
+            End If
+        Loop
+        ListViewPatients.Items(0).Selected = True
+        ListViewPatients.Items(0).EnsureVisible()
+        BtnOk.Enabled = True
+    End Sub
+
+    Public Sub Clear_Details()
+        Dim I As Integer
+        Dim SPHeight As Integer
+        FpSpreadDetails_Sheet1.RowCount = 9
+        For I = 0 To FpSpreadDetails_Sheet1.RowCount - 1
+            FpSpreadDetails_Sheet1.SetText(I, 1, "")
+            FpSpreadDetails_Sheet1.SetRowHeight(I, CInt(FpSpreadDetails_Sheet1.Rows(I).GetPreferredHeight))
+            SPHeight = SPHeight + CInt(FpSpreadDetails_Sheet1.Rows(I).GetPreferredHeight)
+        Next
+        If FpSpreadDetails.Height <> SPHeight Then FpSpreadDetails.Height = SPHeight
+        If FpSpreadProcedures.ActiveSheet.RowCount <> 0 Then FpSpreadProcedures.ActiveSheet.RowCount = 0
+        FpSpreadDetails_Sheet1.Cells(0, 0).Tag = 0
+        ListViewProcedures.Items.Clear()
+        LabelProcedures.Text = "Available Procedures"
+        BtnOk.Enabled = False
+        Label2.Text = ""
+        BtnOk.Enabled = False
+        cmdAddProcedure.Enabled = True
+        Button1.Enabled = True
+    End Sub
+
+    Private Sub ListView1_DoubleClick(ByVal sender As Object, ByVal e As System.EventArgs) Handles ListViewPatients.DoubleClick
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            TextBoxSearch.Focus()
+            Exit Sub
+        End If
+        ListViewProcedures.Focus()
+    End Sub
+
+    Private Sub ListView1_KeyDown(ByVal sender As Object, ByVal e As System.Windows.Forms.KeyEventArgs) Handles ListViewPatients.KeyDown
+        If e.KeyCode = 38 Then
+            If ListViewPatients.SelectedItems.Count > 0 AndAlso ListViewPatients.SelectedItems(0).Index = 0 Then
+                TextBoxSearch.Focus()
+                TextBoxSearch.SelectAll()
+            End If
+        End If
+    End Sub
+
+    Private Sub ListView1_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ListViewPatients.SelectedIndexChanged
+        LockWindowUpdate(Me.Handle)
+        CaseType = 0
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            Clear_Details()
+            'BtnOk.Enabled = False
+            'LabelNMA.Visible = False
+        Else
+            Show_Details(CLng(Val(ListViewPatients.SelectedItems(0).Tag)))
+        End If
+        LockWindowUpdate(0)
+
+    End Sub
+
+    Private NoMoreAppointments As Integer = 0
+    Private RetIDs As String = ""
+    Private CaseType As Long
+    Private ReffCompany As Long
+    Private ReffDoctor As String
+
+    Public Sub Show_Details(ByVal ID As Long)
+        Dim Reader As SqlClient.SqlDataReader
+        Dim SQL As String
+        Dim lCell As String
+        Dim I As Integer
+        Dim SPHeight As Integer
+        Dim Li As ListViewItem
+        Dim SI As ListViewItem.ListViewSubItem
+        Dim CR As Integer
+        gSpreadActivateCell(FpSpreadDetails, 0, 0, True)
+        gSpreadActivateCell(FpSpreadProcedures, 0, 0, True)
+        Clear_Details()
+        DOAVerification = False
+        EFFDTVerification = False
+
+        EFFDT = ""
+        If ListViewPatients.SelectedItems.Count > 0 Then
+            LabelProcedures.Text = "Available " & SchDiagName & " Procedures for the " & ListViewPatients.SelectedItems(0).Text
+        Else
+            If ListViewPatients.Items.Count > 0 Then
+                LabelProcedures.Text = "Available " & SchDiagName & " Procedures for the " & ListViewPatients.Items(0).Text
+            End If
+        End If
+
+        SQL = "SELECT ReferringOffices.OfficeID as RefCompany, ClaimEffectiveDT, CaseTypes.Description as CaseType, Patients.NoMoreAppointmentsInd, Patients.CaseTypeID,   Patients.DOA, Patients.ParentsRequiredInd, Patients.PatientID,  Patients.FName, Patients.MI, Patients.LName, Patients.DOB, Patients.Phone1, Patients.Phone2, Patients.CellPhone, Patients.Address1, Patients.Address2, Patients.City, Patients.State, Patients.Zip, InsuranceCompanies_1.CompanyName AS Insurance1, InsuranceCompanies.CompanyName AS Insurance2, "
+        SQL = SQL & " Patients.ReferringDoctor, ReferringOffices.OfficeName AS ReferringCompany, ReferringOffices.Phone1 AS RefPhone1, ReferringOffices.Phone2 AS RefPhone2, ReferringOffices.Phone3 AS RefPhone3, "
+        SQL = SQL & " TransportationCompanies.CompanyName AS Transportation, TransportationCompanies.Phone1 AS TransPhone1, TransportationCompanies.Phone2 AS TransPhone2, TransportationCompanies.Phone3 AS TransPhone3, Patients.Comments "
+        SQL = SQL & " FROM Patients LEFT OUTER JOIN TransportationCompanies ON Patients.TransportationCompanyID = TransportationCompanies.CompanyID LEFT OUTER JOIN ReferringOffices ON Patients.ReferringCompanyID = ReferringOffices.OfficeID LEFT OUTER JOIN InsuranceCompanies ON Patients.InsuranceCompanyID1 = InsuranceCompanies.CompanyID LEFT OUTER JOIN InsuranceCompanies AS InsuranceCompanies_1 ON Patients.InsuranceCompanyID = InsuranceCompanies_1.CompanyID Inner Join CaseTypes on Patients.CaseTypeID = CaseTypes.CaseTypeID "
+        SQL = SQL & " WHERE Patients.PatientID = " & ID
+        Reader = gSQLGetDataReader(SQL.ToString())
+        SPHeight = FpSpreadDetails.Height
+        If Reader Is Nothing Then Exit Sub
+        Panel3.SuspendLayout()
+        FpSpreadDetails.ShowRow(FpSpreadDetails.GetActiveRowViewportIndex, 0, FarPoint.Win.Spread.VerticalPosition.Top)
+        FpSpreadProcedures.ShowRow(FpSpreadDetails.GetActiveRowViewportIndex, 0, FarPoint.Win.Spread.VerticalPosition.Top)
+        CR = gSQLGetSingleValue("select COUNT(*) from PatientReschedulesCancelations Where PatientID =" & ID)
+        Label2.Text = ""
+        BtnOk.Enabled = True
+        BtnOk.Enabled = True
+        cmdAddProcedure.Enabled = True
+        Button1.Enabled = True
+
+        With FpSpreadDetails_Sheet1
+            Do Until Reader.Read = False
+                ReffCompany = Val(Reader("RefCompany").ToString)
+                ReffDoctor = Reader("ReferringDoctor").ToString
+                CaseType = Val(Reader("CaseTypeID").ToString)
+                If Val(Reader("CaseTypeID").ToString) = 4 Then ' Cash
+                    .SetText(0, 1, Reader("PatientID").ToString & "   /   " & Reader("CaseType").ToString & "   /   Payment Required" & "   /   " & "CR: " & CR)
+                    .Cells(0, 0).ForeColor = Color.Red
+                    .Cells(0, 1).ForeColor = Color.Red
+                Else
+                    .SetText(0, 1, Reader("PatientID").ToString & "   /   " & Reader("CaseType").ToString & "   /   " & "CR: " & CR)
+                    .Cells(0, 0).ForeColor = Color.Black
+                    .Cells(0, 1).ForeColor = Color.Black
+                End If
+                .Cells(0, 0).Tag = "0"
+                If Val(Reader("NoMoreAppointmentsInd").ToString) > 0 Then
+                    .Cells(0, 0).Tag = "1"
+                    Label2.Text = "No More Appointments Allowed!"
+                    BtnOk.Enabled = False
+                    cmdAddProcedure.Enabled = False
+                    Button1.Enabled = False
+                ElseIf CR >= gCancelationDrop Then
+                    .Cells(0, 0).Tag = "2"
+                    Label2.Text = "Attention! Too Many Cancelations / Reschedules"
+                End If
+                Application.DoEvents()
+                If CR >= gCancelationDrop Then
+                    .Cells(0, 1).ForeColor = Color.Red
+                    .Cells(0, 0).ForeColor = Color.Red
+                    .SetText(0, 1, .GetText(0, 1) & " - DROP")
+
+                ElseIf CR >= gCancelationWarning Then
+                    .Cells(0, 1).ForeColor = Color.Red
+                    .Cells(0, 0).ForeColor = Color.Red
+                    .SetText(0, 1, .GetText(0, 1) & "  !!!")
+                Else
+                    .Cells(0, 1).ForeColor = Color.Black
+                    .Cells(0, 0).ForeColor = Color.Black
+                End If
+                .Cells(0, 1).Tag = Val(Reader("CaseTypeID").ToString)
+                .Cells(1, 0).ForeColor = Color.Black
+                .Cells(1, 1).ForeColor = Color.Black
+
+                If IsDate(Reader("DOA").ToString) Then
+                    .SetText(1, 1, CDate(Reader("DOA").ToString).ToString("MM/dd/yyyy"))
+                    If Val(Reader("CaseTypeID").ToString) < 3 Then
+                        If DateDiff(DateInterval.Day, CDate(Reader("DOA").ToString), Now) >= Val(gDOAAge) Then
+                            DOAAge = DateDiff(DateInterval.Day, CDate(Reader("DOA").ToString), Now)
+                            DOAVerification = True
+                            .SetText(1, 1, CDate(Reader("DOA").ToString).ToString("MM/dd/yyyy") & "  " & "Insurance Verification Required!")
+                            .Cells(1, 0).ForeColor = Color.Red
+                            .Cells(1, 1).ForeColor = Color.Red
+                        End If
+                    End If
+                End If
+                If IsDate(Reader("ClaimEffectiveDT").ToString) Then
+                    If Val(Reader("CaseTypeID").ToString) < 3 Then
+                        If CDate(Reader("ClaimEffectiveDT").ToString) >= CDate(Reader("DOA").ToString) Then
+                            EFFDT = Reader("ClaimEffectiveDT").ToString
+                            EFFDTVerification = True
+                        End If
+                    End If
+                End If
+
+                If Reader("Phone1").ToString <> "" And Reader("Phone1").ToString <> "" Then .SetText(2, 1, Reader("Phone1").ToString)
+                If Reader("CellPhone").ToString <> "" And Reader("CellPhone").ToString <> "" Then .SetText(3, 1, Reader("CellPhone").ToString)
+                If Reader("Phone2").ToString <> "" And Reader("Phone2").ToString <> "" Then .SetText(4, 1, Reader("Phone2").ToString)
+                .SetText(5, 1, Reader("Address1").ToString & " " & Reader("Address2").ToString & IIf(Reader("City").ToString <> "", ", " & Reader("City").ToString, "").ToString & IIf(Reader("State").ToString <> "", ", " & Reader("State").ToString, "").ToString & IIf(Replace(Reader("Zip").ToString, "_", "") <> "", ", " & Reader("Zip").ToString, "").ToString)
+                lCell = Reader("ReferringCompany").ToString
+                lCell = lCell & IIf(Reader("RefPhone1").ToString <> "" And Reader("RefPhone1").ToString <> "", vbCrLf & Reader("RefPhone1").ToString, "").ToString
+                lCell = lCell & IIf(Reader("RefPhone2").ToString <> "" And Reader("RefPhone2").ToString <> "", vbCrLf & Reader("RefPhone2").ToString, "").ToString
+                lCell = lCell & IIf(Reader("RefPhone3").ToString <> "" And Reader("RefPhone3").ToString <> "", vbCrLf & Reader("RefPhone3").ToString, "").ToString
+                lCell = lCell & IIf(Reader("ReferringDoctor").ToString <> "", vbCrLf & Reader("ReferringDoctor").ToString, "").ToString
+                .SetText(6, 1, lCell)
+                lCell = Reader("Transportation").ToString
+                lCell = lCell & IIf(Reader("TransPhone1").ToString <> "" And Reader("TransPhone1").ToString <> "", vbCrLf & Reader("TransPhone1").ToString, "").ToString
+                lCell = lCell & IIf(Reader("TransPhone2").ToString <> "" And Reader("TransPhone2").ToString <> "", vbCrLf & Reader("TransPhone2").ToString, "").ToString
+                lCell = lCell & IIf(Reader("TransPhone3").ToString <> "" And Reader("TransPhone3").ToString <> "", vbCrLf & Reader("TransPhone3").ToString, "").ToString
+                .SetText(7, 1, lCell)
+                .SetText(8, 1, Reader("Comments").ToString)
+                .Cells(8, 1).ForeColor = Color.Chocolate
+                If Val(Reader("ParentsRequiredInd").ToString) = 1 Then
+                    .RowCount = .RowCount + 1
+                    .SetText(.RowCount - 1, 0, "Attention")
+                    .SetText(.RowCount - 1, 1, "Underage Patient - " & gYearsFromDate(Reader("DOB").ToString) & " years old. Parents presence required")
+                    .Cells(.RowCount - 1, 0).ForeColor = Color.Red
+                    .Cells(.RowCount - 1, 1).ForeColor = Color.Red
+                End If
+                NoMoreAppointments = 0
+                If Val(Reader("NoMoreAppointmentsInd").ToString) > 0 Or CR >= gCancelationDrop Then
+                    NoMoreAppointments = 1
+                    .RowCount = .RowCount + 1
+                    .SetText(.RowCount - 1, 0, "Attention")
+                    If Val(Reader("NoMoreAppointmentsInd").ToString) = 0 Then
+                        .SetText(.RowCount - 1, 1, "Attention! Too Many Cancelations / Reschedules")
+                    Else
+                        .SetText(.RowCount - 1, 1, "No More Appointments!")
+                    End If
+                    .Cells(.RowCount - 1, 0).ForeColor = Color.Red
+                    .Cells(.RowCount - 1, 1).ForeColor = Color.Red
+
+                End If
+                SPHeight = 0
+                For I = 0 To .RowCount - 1
+                    .SetRowHeight(I, CInt(.Rows(I).GetPreferredHeight))
+                    SPHeight = SPHeight + CInt(.Rows(I).GetPreferredHeight)
+                Next
+
+            Loop
+        End With
+        SPHeight = SPHeight + 17
+        If FpSpreadDetails.Height <> SPHeight Then FpSpreadDetails.Height = SPHeight
+        SQL = "SELECT PreCertificationDT, PatientProcedures.BillingProviderID, BillingProvider.Fname +' '+BillingProvider.LName+' '+Employees.Alias as BName , PatientProcedures.ReferringDoctor,  PatientProcedures.TreatingProviderID, Employees.Fname +' '+Employees.LName+' '+Employees.Alias as TRName, PatientProcedures.PatientProcedureID, PatientProcedures.ProcID, PatientProcedures.DiagID, PatientProcedures.ProcedureStatusID, Procedures.ProcName, Schedule.ScheduleDateTime "
+        SQL = SQL & " FROM         PatientProcedures INNER JOIN Procedures ON PatientProcedures.ProcID = Procedures.ProcID LEFT OUTER JOIN Schedule ON PatientProcedures.ScheduleID = Schedule.ScheduleID INNER JOIN Patients on PatientProcedures.PatientID = Patients.PatientID"
+        SQL = SQL & " LEFT OUTER JOIN Employees on PatientProcedures.TreatingProviderID = Employees.EmpID"
+        SQL = SQL & " LEFT OUTER JOIN Employees BillingProvider on PatientProcedures.BillingProviderID = BillingProvider.EmpID"
+
+        SQL = SQL & " WHERE isnull(NoMoreAppointmentsInd,0)=0 and PatientProcedures.PatientID = " & ID
+        SQL = SQL & " Order by PatientProcedures.ProcID "
+        Reader = gSQLGetDataReader(SQL.ToString())
+        FpSpreadProcedures.ActiveSheet.RowCount = 0
+        ListViewProcedures.Items.Clear()
+        If Reader Is Nothing Then Panel3.ResumeLayout(True) : Exit Sub
+        With FpSpreadProcedures.ActiveSheet
+            .RowCount = 0
+            Do Until Reader.Read = False
+                .RowCount = .RowCount + 1
+                .SetText(.RowCount - 1, 0, Val(Reader("ProcedureStatusID").ToString).ToString)
+                .SetText(.RowCount - 1, 1, Reader("ProcName").ToString)
+                If Reader("ScheduleDateTime").ToString <> "" Then
+                    If Val(Reader("ProcedureStatusID").ToString) = 1 And DateDiff(DateInterval.Hour, CDate(Reader("ScheduleDateTime")), Now) > gNoShowHours Then
+                        .SetText(.RowCount - 1, 2, "NS " & CDate(Reader("ScheduleDateTime")).ToString("MM/dd/yy hh:mm tt"))
+                        .Cells(.RowCount - 1, 1).ForeColor = Color.DarkRed
+                        .Cells(.RowCount - 1, 2).ForeColor = Color.DarkRed
+                        '.Cells(.RowCount - 1, 1).Font = New Font(.Cells(.RowCount - 1, 1).Font, FontStyle.Bold)
+                        '.Cells(.RowCount - 1, 2).Font = New Font(.Cells(.RowCount - 1, 2).Font, FontStyle.Bold)
+                    Else
+                        .SetText(.RowCount - 1, 2, CDate(Reader("ScheduleDateTime")).ToString("MM/dd/yy hh:mm tt"))
+                    End If
+                End If
+                .SetRowHeight(.RowCount - 1, CInt(.Rows(.RowCount - 1).GetPreferredHeight + 2))
+                If Val(Reader("DiagID").ToString) = Val(SchDiagID) Then
+
+                    If Reader("ScheduleDateTime").ToString = "" Then
+                        If Val(Reader("ProcedureStatusID").ToString) = 0 Then
+                            Li = ListViewProcedures.Items.Add(Reader("ProcName").ToString)
+                            Li.UseItemStyleForSubItems = True
+                            Li.Tag = CLng(Val(Reader("PatientProcedureID").ToString))
+                            Li.SubItems.Add("")
+                            SI = Li.SubItems.Add(Reader("TRName").ToString)
+                            SI.Tag = Reader("PatientProcedureID").ToString
+                            SI.Tag = Reader("PatientProcedureID").ToString
+                            Li.SubItems.Add(Reader("ReferringDoctor").ToString)
+                            SI = Li.SubItems.Add(Reader("BName").ToString)
+                            SI.Tag = Reader("BillingProviderID").ToString
+                            Dim CaseType As Integer = gSQLGetSingleValue("select CaseTypeID from Patients where PatientID=" & ID)
+
+
+                            If IsDate(Reader("PreCertificationDT").ToString) Then
+                                SI = Li.SubItems.Add(CDate(Reader("PreCertificationDT").ToString).ToShortDateString)
+                            Else
+                                SI = Li.SubItems.Add("")
+                            End If
+                        End If
+                    Else
+                        If Val(Reader("ProcedureStatusID").ToString) = 1 And DateDiff(DateInterval.Hour, CDate(Reader("ScheduleDateTime")), Now) > gNoShowHours Then
+                            Li = ListViewProcedures.Items.Add(Reader("ProcName").ToString)
+                            Li.SubItems.Add("NS " & Reader("ScheduleDateTime").ToString)
+                            Li.Tag = CLng(Val(Reader("PatientProcedureID").ToString))
+                            Li.ForeColor = Color.DarkRed
+                            Li.SubItems(1).ForeColor = Color.DarkRed
+                            Li.Font = New Font(Li.Font, FontStyle.Bold)
+                            Li.Font = New Font(Li.Font, FontStyle.Bold)
+                            SI = Li.SubItems.Add(Reader("TRName").ToString)
+                            SI.Tag = Reader("PatientProcedureID").ToString
+                            Li.SubItems.Add(Reader("ReferringDoctor").ToString)
+                            SI = Li.SubItems.Add(Reader("BName").ToString)
+                            SI.Tag = Reader("BillingProviderID").ToString
+                            If IsDate(Reader("PreCertificationDT").ToString) Then
+                                SI = Li.SubItems.Add(CDate(Reader("PreCertificationDT").ToString).ToShortDateString)
+                            Else
+                                SI = Li.SubItems.Add("")
+                            End If
+                        ElseIf SchID <> 0 Then
+                            If Val(Reader("ProcedureStatusID").ToString) = 1 Then
+                                Li = ListViewProcedures.Items.Add(Reader("ProcName").ToString)
+                                Li.SubItems.Add(Reader("ScheduleDateTime").ToString)
+                                Li.Tag = CLng(Val(Reader("PatientProcedureID").ToString))
+                                Li.SubItems(1).Tag = 1
+                                Li.Checked = True
+                                SI = Li.SubItems.Add(Reader("TRName").ToString)
+                                SI.Tag = Reader("PatientProcedureID").ToString
+                                Li.SubItems.Add(Reader("ReferringDoctor").ToString)
+                                SI = Li.SubItems.Add(Reader("BName").ToString)
+                                SI.Tag = Reader("BillingProviderID").ToString
+                                If IsDate(Reader("PreCertificationDT").ToString) Then
+                                    SI = Li.SubItems.Add(CDate(Reader("PreCertificationDT").ToString).ToShortDateString)
+                                Else
+                                    SI = Li.SubItems.Add("")
+                                End If
+                            End If
+                        End If
+                    End If
+                Else
+
+                End If
+            Loop
+        End With
+        Panel3.ResumeLayout(True)
+    End Sub
+
+    Private Sub frmScheduleSearchPopup_FormClosing(ByVal sender As Object, ByVal e As System.Windows.Forms.FormClosingEventArgs) Handles Me.FormClosing
+        Me.Dispose()
+    End Sub
+
+    Private Sub frmScheduleSearchPopup_Load(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles MyBase.Load
+        'Dim ColWidth As Integer
+        'ListViewPatients.Columns(0).Width = ListViewPatients.Width - Windows.Forms.SystemInformation.VerticalScrollBarWidth
+        'ColWidth = ((ListViewProcedures.Width - Windows.Forms.SystemInformation.VerticalScrollBarWidth) / 7) - 1
+        'ListViewProcedures.Columns(0).Width = ColWidth * 2
+        'ListViewProcedures.Columns(1).Width = ColWidth
+        'ListViewProcedures.Columns(2).Width = ColWidth
+        'ListViewProcedures.Columns(3).Width = ColWidth
+        'ListViewProcedures.Columns(4).Width = ColWidth
+        'ListViewProcedures.Columns(5).Width = ColWidth
+        Label2.Text = ""
+    End Sub
+
+    Private Sub frmScheduleSearchPopup_Shown(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.Shown
+        If TextBoxSearch.CanFocus Then TextBoxSearch.Focus()
+    End Sub
+
+    Private Sub BtnOk_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles BtnOk.Click
+        Dim Li As ListViewItem
+        Dim SQL As String
+        Dim ScheduleID As Long = 0
+        Dim ToolTip As String = ""
+        'Dim Reader As SqlClient.SqlDataReader
+        Dim ApprovedByID As Long = 0
+        Dim ApprovedByName As String = ""
+        Dim Msg0 As String = ""
+        Dim Msg As String = ""
+        Dim Msg1 As String = ""
+        Dim TempDoNotRequireAdmiForOldDOA As Boolean
+        Dim ScheduleDateTime As String = CDate(SchDate & " " & SchH & ":" & SchM & " " & SchAM).ToString
+        Dim calledFrmSchedule As frmSchedule = DirectCast(CalledForm, frmSchedule)
+
+        If SchID = 0 Then
+            SQL = "SELECT count (*) from Schedule inner join PatientProcedures on Schedule.ScheduleID = PatientProcedures.ScheduleID "
+            SQL &= " where PatientProcedures.DiagID = " & SchDiagID
+            SQL &= " and Schedule.ScheduleDateTime = '" & ScheduleDateTime & "'"
+            If gSQLGetSingleValue(SQL) > 0 Then
+                calledFrmSchedule.TimerReloadSchedule.Enabled = True
+                Application.DoEvents()
+                MsgBox("Unable to create a schedule. " & vbCrLf & "The selected schedule time spot: " & ScheduleDateTime & " is already busy." & vbCrLf & vbCrLf & "Please select another time spot.", MsgBoxStyle.Exclamation)
+                DialogResult = DialogResult.Cancel
+                Close()
+                Exit Sub
+            End If
+        End If
+
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            MsgBox("Unable to update schedule. No Patient Selected.", MsgBoxStyle.Exclamation)
+            TextBoxSearch.Focus()
+            Exit Sub
+        End If
+        If ListViewPatients.SelectedItems(0).ForeColor = Color.Red Then
+            MsgBox("Unable to setup appointment for this patient." & vbCrLf & "No More Appointments Allowed.", MsgBoxStyle.Exclamation)
+            ListViewPatients.Focus()
+            Exit Sub
+        End If
+
+        If ListViewProcedures.CheckedItems.Count = 0 Then
+            MsgBox("Unable to setup appointment." & vbCrLf & "No Procedures Selected.", MsgBoxStyle.Exclamation)
+            ListViewProcedures.Focus()
+            Exit Sub
+        End If
+
+        If FpSpreadDetails_Sheet1.Cells(0, 1).Tag = "1" Then
+            If IsDate(FpSpreadDetails_Sheet1.Cells(1, 1).Text) Then
+                If DateDiff(DateInterval.Day, CDate(FpSpreadDetails_Sheet1.Cells(1, 1).Text), Now) < gMinNoFaultDays Then
+                    MsgBox("Unable to setup appointment for this patient." & vbCrLf & "NoFault case. " & DateDiff(DateInterval.Day, CDate(FpSpreadDetails_Sheet1.Cells(1, 1).Text), Now) & " days since DOA." & vbCrLf & "Minimum " & gMinNoFaultDays & " days since DOA required before the first appointment.", MsgBoxStyle.Exclamation)
+                    ListViewPatients.Focus()
+                    Exit Sub
+                End If
+            End If
+        End If
+
+        Update_Procedures()
+        If gProcsPerVisit <> -1 And FpSpreadDetails_Sheet1.Cells(0, 1).Tag <> "4" Then
+            If ListViewProcedures.CheckedItems.Count > gProcsPerVisit Then
+                MsgBox("Unable to setup appointment." & vbCrLf & "Only " & gProcsPerVisit & " procedures allowed per appointment.", MsgBoxStyle.Exclamation)
+                ListViewProcedures.Focus()
+                Exit Sub
+            End If
+        End If
+        Msg = ""
+        If DOAVerification Or EFFDTVerification Then
+            If DOAVerification Then
+                Msg = "DOA is " & DOAAge & " days old. Which is more then limit: " & gDOAAge
+                TempDoNotRequireAdmiForOldDOA = True
+            End If
+            If EFFDTVerification Then
+                If Msg <> "" Then
+                    Msg &= vbCrLf & "The Claim Effective Date " & CDate(EFFDT).ToString("MM/dd/yyyy") & "  is equal or less then DOA."
+                    TempDoNotRequireAdmiForOldDOA = False
+                Else
+                    Msg &= "Claim Effective Date " & CDate(EFFDT).ToString("MM/dd/yyyy") & "  is equal or less then DOA."
+                    TempDoNotRequireAdmiForOldDOA = False
+                End If
+            End If
+            If Msg <> "" Then Msg = Msg & vbCrLf & vbCrLf & "ATTENTION!" & vbCrLf & "Insurance Verification is required." & vbCrLf & vbCrLf & "Call the insurance company to verify patient's coverage at the date of accident before scheduling an appointment!"
+
+            If gCurrentEmployee.PositionID > 3 And TempDoNotRequireAdmiForOldDOA = False Then
+                frmSupervisorApproval.LabelMsg.Text = Msg
+
+                If frmSupervisorApproval.ShowDialog <> Windows.Forms.DialogResult.OK Then
+                    frmSupervisorApproval.Dispose()
+                    Exit Sub
+                End If
+                ApprovedByID = frmSupervisorApproval.SupervisorID
+                ApprovedByName = frmSupervisorApproval.SupervisorName
+                frmSupervisorApproval.Dispose()
+            Else
+                If MsgBox(Msg & vbCrLf & vbCrLf & "Do you want to continue?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo, "Supervisor Approval") = MsgBoxResult.No Then
+                    Exit Sub
+                End If
+                ApprovedByName = gCurrentEmployee.FName & " " & gCurrentEmployee.LName
+                ApprovedByID = gCurrentEmployee.EmpID
+            End If
+        End If
+        If FpSpreadDetails_Sheet1.Cells(0, 1).Tag = "4" Then
+
+        End If
+
+        frmRequireTransportation.CalledForm = Me
+        If SchID <> 0 Then
+            frmRequireTransportation.ComboBoxPickup.SelectedIndex = ReturnSchPickupTransportation
+            If ReturnSchPickupTransportation = 3 Then
+                frmRequireTransportation.txtPickupOther.Text = calledFrmSchedule.ReturnSchPickupTransportationOther.Replace("PU: ", "")
+            Else
+                frmRequireTransportation.txtPickupOther.Text = ""
+            End If
+            frmRequireTransportation.ComboBoxDestination.SelectedIndex = ReturnSchDestinationTransportation
+            If ReturnSchDestinationTransportation = 3 Then
+                frmRequireTransportation.txtDestinationOther.Text = calledFrmSchedule.ReturnSchDestinationTransportationOther.Replace("DO: ", "")
+            Else
+                frmRequireTransportation.txtDestinationOther.Text = ""
+            End If
+
+        End If
+        If frmRequireTransportation.ShowDialog() <> Windows.Forms.DialogResult.OK Then
+            frmRequireTransportation.Dispose()
+            Exit Sub
+        End If
+        For Each Li In ListViewProcedures.Items
+            If Li.Checked Then
+                ToolTip = ToolTip & Li.Text & vbCrLf
+            End If
+        Next
+        calledFrmSchedule.ReturnSchPickupTransportation = ReturnSchPickupTransportation
+        If ReturnSchPickupTransportation = 3 Then
+            calledFrmSchedule.ReturnSchPickupTransportationOther = ReturnSchPickupTransportationOther
+        Else
+            calledFrmSchedule.ReturnSchPickupTransportationOther = ""
+        End If
+        calledFrmSchedule.ReturnSchDestinationTransportation = ReturnSchDestinationTransportation
+        If ReturnSchDestinationTransportation = 3 Then
+            calledFrmSchedule.ReturnSchDestinationTransportationOther = ReturnSchDestinationTransportationOther
+        Else
+            calledFrmSchedule.ReturnSchDestinationTransportationOther = ""
+        End If
+
+        frmRequireTransportation.Dispose()
+        calledFrmSchedule.ReturnSchName = ListViewPatients.SelectedItems(0).Text
+
+        If SchID = 0 Then
+            SQL = "INSERT INTO SCHEDULE ( ScheduleDateTime, PickupTransportation, DestinationTransportation, PickupTransportationOther, DestinationTransportationOther, PickupTransportationStatus, DestinationTransportationStatus, InsertedDT, UpdatedDT, UpdatedByEmpID, ToolTip) VALUES "
+            SQL = SQL & "('" & ScheduleDateTime & "', " & ReturnSchPickupTransportation & ", " & ReturnSchDestinationTransportation & ", '" & ReturnSchPickupTransportationOther.ToSafeSQLString() & "', '" & ReturnSchDestinationTransportationOther.ToSafeSQLString() & "', 0, 0, getdate(),getdate()," & gCurrentEmployee.EmpID.ToString & ", '" & ToolTip.ToSafeSQLString() & "')"
+            gSQLUpdateData(SQL)
+            ScheduleID = gSQLGetSingleValue("SELECT IDENT_CURRENT('SCHEDULE') ")
+        Else
+            SQL = "UPDATE SCHEDULE  SET PickupTransportation=" & ReturnSchPickupTransportation & ", DestinationTransportation=" & ReturnSchDestinationTransportation & ", PickupTransportationOther = '" & ReturnSchPickupTransportationOther.ToSafeSQLString() & "', DestinationTransportationOther='" & ReturnSchDestinationTransportationOther.ToSafeSQLString() & "', ToolTip = '" & ToolTip.ToSafeSQLString() & "', PickupTransportationStatus=0, DestinationTransportationStatus=0  Where ScheduleID = " & SchID
+            gSQLUpdateData(SQL)
+            ScheduleID = SchID
+        End If
+
+        For Each Li In ListViewProcedures.Items
+            If Li.Checked Then
+                If gOfficeTypeID = 3 AndAlso IsDate(Li.SubItems(5).Text) Then
+                    gSQLUpdateData("UPDATE PatientProcedures set PreCertificationDT= '" & Li.SubItems(5).Text & "', ScheduleID = " & ScheduleID & ", UpdatedDT=getdate(), UpdatedByEmpID=" & gCurrentEmployee.EmpID.ToString & ", DoNotBillInd=0, DoNotBillAction =0, ProcedureStatusID=1 Where PatientProcedureID=" & Li.Tag)
+                Else
+                    gSQLUpdateData("UPDATE PatientProcedures set PreCertificationDT= Null, ScheduleID = " & ScheduleID & ", UpdatedDT=getdate(), UpdatedByEmpID=" & gCurrentEmployee.EmpID.ToString & ", DoNotBillInd=0, DoNotBillAction =0, ProcedureStatusID=1 Where PatientProcedureID=" & Li.Tag)
+                End If
+                If DOAVerification Or EFFDTVerification Then
+                    gUpdate_Profile_Log(ListViewPatients.SelectedItems(0).Tag, PatientLogTypes.tScheduleCreated, ScheduleDateTime & " - " & Li.Text & " DOA - Approved By " & ApprovedByName, ApprovedByName)
+                Else
+                    gUpdate_Profile_Log(ListViewPatients.SelectedItems(0).Tag, PatientLogTypes.tScheduleCreated, ScheduleDateTime & " - " & Li.Text)
+                End If
+            Else
+                If Val(Li.SubItems(1).Tag) = 1 Then
+                    If gOfficeTypeID = 3 AndAlso IsDate(Li.SubItems(5).Text) Then
+                        gSQLUpdateData("UPDATE PatientProcedures set  PreCertificationDT= '" & Li.SubItems(5).Text & "', ScheduleID =Null , UpdatedDT=getdate(), UpdatedByEmpID=" & gCurrentEmployee.EmpID.ToString & ", ProcedureStatusID=0 Where PatientProcedureID=" & Li.Tag)
+                    Else
+                        gSQLUpdateData("UPDATE PatientProcedures set  PreCertificationDT= Null, ScheduleID =Null , UpdatedDT=getdate(), UpdatedByEmpID=" & gCurrentEmployee.EmpID.ToString & ", ProcedureStatusID=0 Where PatientProcedureID=" & Li.Tag)
+                    End If
+                    gUpdate_Profile_Log(ListViewPatients.SelectedItems(0).Tag, PatientLogTypes.tProceduresRemoved, ScheduleDateTime & " - " & Li.Text)
+                End If
+            End If
+        Next
+        DirectCast(CalledForm, frmSchedule).ReturnUserID = CLng(ListViewPatients.SelectedItems(0).Tag)
+        DialogResult = Windows.Forms.DialogResult.OK
+        Me.Close()
+    End Sub
+
+    Private Sub Update_Procedures()
+        Dim LI As ListViewItem
+        If ListViewPatients.SelectedItems.Count = 0 Then Exit Sub
+        If ListViewProcedures.Items.Count = 0 Then Exit Sub
+        If CaseType = 0 Then Exit Sub
+        If Val(SchDiagID) = 0 Then Exit Sub
+        Dim TA As New SqlClient.SqlDataAdapter("SELECT * FROM PatientProcedures Where 1=2", gConnectionString)
+        Dim CB As New SqlClient.SqlCommandBuilder(TA)
+        CB.ConflictOption = ConflictOption.OverwriteChanges
+        Dim TR As DataRow
+        Dim dTab As New DataTable("PatientProcedures")
+        'Update  Procedures
+        TA.Fill(dTab)
+        If CaseType = 0 Then Exit Sub
+        Dim BillingCompanyID As Long = gSQLGetSingleValue("Select BillingCompanyID From Patients Where PatientID = " & ListViewPatients.SelectedItems(0).Tag)
+        For Each LI In ListViewProcedures.Items
+            If LI.ForeColor = Color.Blue Then
+                TR = dTab.NewRow
+                TR("PatientID") = ListViewPatients.SelectedItems(0).Tag
+                TR("DiagID") = Val(SchDiagID)
+                TR("OfficeID") = gOfficeID
+                TR("ProcID") = LI.Tag
+                TR("InsertedDT") = Now
+                TR("ProcedureStatusID") = 0 ' Not Scheduled
+                TR("BillingCompanyBillStatusID") = 1 ' New
+                TR("TreatingProviderID") = Val(LI.SubItems(2).Tag)
+                TR("BillingProviderID") = Val(LI.SubItems(3).Tag)
+                TR("BillingProviderID") = Val(LI.SubItems(4).Tag)
+                TR("ReferringDoctor") = LI.SubItems(3).Text
+                If gOfficeTypeID = 3 Then
+                    TR("PreCertificationDT") = IIf(IsDate(LI.SubItems(5).Text), LI.SubItems(5).Text, DBNull.Value)
+                Else
+                    TR("PreCertificationDT") = DBNull.Value
+                End If
+
+                'NewLI.SubItems(3).Tag
+
+                Select Case CaseType
+                    Case 1
+                        TR("BillingPrice") = gSQLGetSingleValue("SELECT     NFCost FROM Procedures WHERE ProcID = " & LI.Tag)
+                    Case 2
+                        TR("BillingPrice") = gSQLGetSingleValue("SELECT     WCCost FROM Procedures WHERE ProcID = " & LI.Tag)
+                    Case 3
+                        TR("BillingPrice") = gSQLGetSingleValue("SELECT     PRCost FROM Procedures WHERE ProcID = " & LI.Tag)
+                End Select
+                TR("BillingCompanyID") = BillingCompanyID
+                TR("UpdatedByEmpID") = gCurrentEmployee.EmpID.ToString
+                dTab.Rows.Add(TR)
+                TA.UpdateCommand = CB.GetUpdateCommand(True)
+                Try
+                    TA.Update(dTab)
+                    dTab.AcceptChanges()
+                Catch ex As Exception
+                    TopMost = False
+                    MsgBox(ex.Message, MsgBoxStyle.Critical, "Error")
+                    log.Error(ex.Message, ex)
+                End Try
+                LI.Tag = gSQLGetSingleValue("Select IDENT_CURRENT('PatientProcedures')")
+                LI.ForeColor = Color.Black
+            End If
+        Next
+
+        dTab.Dispose() : CB.Dispose() : TA.Dispose()
+    End Sub
+
+    Private Sub BtnCancel_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles BtnCancel.Click
+        Update_Procedures()
+        Me.Close()
+    End Sub
+
+    Private Sub ListBoxProcedures_ItemChecked(ByVal sender As Object, ByVal e As System.Windows.Forms.ItemCheckedEventArgs) Handles ListViewProcedures.ItemChecked
+        Label2.Text = ""
+        If ListViewProcedures.CheckedItems.Count > 0 Then
+            If ListViewPatients.SelectedItems(0).ForeColor = Color.Red Then
+                BtnOk.Enabled = False
+            Else
+                BtnOk.Enabled = True
+            End If
+        Else
+            BtnOk.Enabled = False
+        End If
+
+        cmdAddProcedure.Enabled = True
+        Button1.Enabled = True
+
+        If Val(FpSpreadDetails_Sheet1.Cells(0, 0).Tag) = 1 Then
+            Label2.Text = "No More Appointments Allowed!"
+            BtnOk.Enabled = False
+            cmdAddProcedure.Enabled = False
+            Button1.Enabled = False
+        ElseIf Val(FpSpreadDetails_Sheet1.Cells(0, 0).Tag) = 2 Then
+            Label2.Text = "Attention. Too Many Cancelations / Reschedules"
+        End If
+
+    End Sub
+
+    Private Sub ListBoxProcedures_SelectedIndexChanged(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ListViewProcedures.SelectedIndexChanged
+
+    End Sub
+
+    Private Sub FpSpreadDetails_CellClick(ByVal sender As System.Object, ByVal e As FarPoint.Win.Spread.CellClickEventArgs) Handles FpSpreadDetails.CellClick
+
+    End Sub
+
+    Private Sub cmdAddProcedure_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdAddProcedure.Click
+        If ListViewPatients.SelectedItems.Count = 0 Then
+            MsgBox("Unable to update schedule. No Patient Selected.", MsgBoxStyle.Exclamation)
+            TextBoxSearch.Focus()
+            Exit Sub
+        End If
+        If ListViewPatients.SelectedItems(0).ForeColor = Color.Red Then
+            MsgBox("Unable to setup appointment for this patient." & vbCrLf & "No More Appointments flag is set.", MsgBoxStyle.Exclamation)
+            ListViewPatients.Focus()
+            Exit Sub
+        End If
+        If NoMoreAppointments > 0 Then
+            MsgBox("Unable to add procedures to the patient marked as" & vbCrLf & "`No More Appointments`", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        frmAddProcedure.ReferringCompanyID = ReffCompany
+        If gOfficeTypeID = 1 Or gOfficeTypeID = 3 Then frmAddProcedure.ReferringDoctorName = ReffDoctor
+        frmAddProcedure.DiagID = Val(SchDiagID)
+        frmAddProcedure.CalledListViewProcedures = ListViewProcedures
+        frmAddProcedure.CaseType = CaseType
+        frmAddProcedure.Top = Me.Top
+        frmAddProcedure.Left = CInt(Me.Left + (Me.Width - frmAddProcedure.Width) / 2)
+        frmAddProcedure.ShowDialog(Me)
+        frmAddProcedure.Dispose()
+        Application.DoEvents()
+    End Sub
+
+    Private Sub Button1_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Button1.Click
+        Dim SaveIndex As Integer
+        If ListViewProcedures.SelectedItems.Count = 0 Then
+            MsgBox("Unable to process your request." & vbCrLf & "No procedure selected.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        If ListViewProcedures.SelectedItems(0).ForeColor <> Color.Blue Then
+            MsgBox("Unable to process your request." & vbCrLf & "You can only remove the new procedures shown in blue color.", MsgBoxStyle.Exclamation)
+            Exit Sub
+        End If
+        If MsgBox("Please confirm you want to remove procedure" & vbCrLf & ListViewProcedures.SelectedItems(0).Text, MsgBoxStyle.Exclamation Or MsgBoxStyle.YesNo) = MsgBoxResult.No Then Exit Sub
+
+        'If ListViewProcedures.SelectedItems(0).Tag <> "" Then
+        'gSQLDeleteRecord("Delete from PatientProcedures Where PatientProcedureID = " & ListViewProcedures.SelectedItems(0).Tag)
+        'End If
+        SaveIndex = ListViewProcedures.SelectedItems(0).Index
+        ListViewProcedures.Items.Remove(ListViewProcedures.SelectedItems(0))
+        If ListViewProcedures.Items.Count > 0 Then
+            If ListViewProcedures.Items.Count - 1 >= SaveIndex Then
+                ListViewProcedures.Items(SaveIndex).Selected = True
+            Else
+                ListViewProcedures.Items(SaveIndex - 1).Selected = True
+            End If
+        End If
+    End Sub
+
+    Private Sub Timer1_Tick(sender As Object, e As EventArgs) Handles Timer1.Tick
+        Timer1.Enabled = False
+        Timer1.Stop()
+        Panel3.SuspendLayout()
+        ListViewPatients.Items.Clear()
+        If TextBoxSearch.Text.Trim = "" Then
+            Clear_Details()
+            BtnOk.Enabled = False
+            Panel3.ResumeLayout(True)
+            Exit Sub
+        End If
+        Find_Patients()
+        Panel3.ResumeLayout(True)
+
+    End Sub
+
+End Class

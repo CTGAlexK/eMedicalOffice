@@ -1,0 +1,119 @@
+Dear DMITRIY STOLYAR
+
+
+
+The CD you ordered will be shipped to you within 48 hours.
+ Please allow 1-7 days for delivery (based on country).Thank you for licensing EZTwain Pro 3 for redistribution with your application.
+Merci pour autoriser de EZTwain Pro 3 pour la redistribution avec votre logiciel.
+¡Gracias por comprar una licencia del EZTwain Pro!
+
+Licensee:
+
+Purchased by:
+DMITRIY STOLYAR
+TMCI Services Inc.
+Brooklyn NY
+United States
+
+------- Unlock Instructions / Comment ouvrir / Cómo abrir -----------
+
+Application Title / Titre de logiciel / Título del software:
+eMedicalOffice
+Unlock Key / Clef numérique / llave numérica:
+ 
+999736100
+
+
+To unlock EZTwain for use by your application, please add this function call to your code, before your other calls to EZTwain:
+Pour activer EZTwain à l'usage de votre logiciel, ajoutez svp cet appel de fonction à votre code, avant vos autres appels à EZTwain : 
+Para activar EZTwain para uso de su software, agregue por favor esta llamada de función a su código, antes de sus otras llamadas a EZTwain: 
+
+    TWAIN_ApplicationLicense("eMedicalOffice",  
+999736100
+)
+
+Your language syntax may vary.
+La syntaxe exacte dépendra bien sûr sur votre langue de programmation.
+Su sintaxis de la lengua puede variar.
+
+Please refer to the EZTwain User Guide for information about installing EZTwain with your application.
+Refiera por favor a la Guía de Usuario de EZTwain Pro para la información sobre la distribución de EZTwain con su software.
+
+EZTwain downloads and news are always available on this page:
+Les dernières versions et nouvelles d'EZTwain sont toujours disponibles à cette page : 
+Las últimas versiones y noticias de EZTwain están siempre disponibles en esta página:
+ 
+http://www.dosadi.com/eztwain3.htm
+
+Please write or call if you have problems, questions or suggestions:
+Svp écrivez ou appelez si vous avez des problèmes, des questions ou des suggestions:
+Escriba o llame por favor si usted tiene problemas, preguntas o sugerencias:
+
+support@dosadi.com
+http://dosadi.com/forums
++1 206 463 4087 (GMT-8:00)
+
+Thanks / Merci / Gracias / Danke
+
+
+**************************************************************************
+IMPORTANT:  This receipt is best viewed with a fixed width font. (Courier)
+
+***      DO NOT REPLY TO THIS EMAIL AS THIS ADDRESS IS NOT CHECKED     ***
+                  SEE BELOW FOR CONTACT INFORMATION
+**************************************************************************
+
+Thank you for your recent purchase using the Plimus.com Online Store.
+
+Plimus is under contract with Dosadi to process orders and collect payments.
+
+If you have any content-related or technical questions about the product, only the manufacturer can provide proper support, please contact 
+Name: Dosadi
+Email: support@dosadi.com
+
+If you contact the seller, please be patient and allow them 2 business days to respond.
+
+If after two business days the issue remains unresolved, Plimus will be happy to assist you directly.  To make a customer service inquiry regarding this purchase please visit:
+http://www.plimus.com/jsp/escalate_issue.jsp?ref=53274062
+
+We have received your order and your credit card charge has been authorized.
+
+Use the link below to request product support, see your order information online, retrieve your receipt, obtain an official invoice, request refund or to have your product/registration keys resent (if applicable), do not reply to this email as your reply will go unread:
+https://shoppers.plimus.com/jsp/order_locator_info.jsp?refId=0CCD0ECEF970512C&acd=3A861B1B18C6997F
+
+We appreciate your business and look forward to serving you again in the future. Please find the receipt for your order at the end of this message.
+
+IMPORTANT: This charge will appear on your credit card statement as 
+           "PLI*DOSADI"
+
+----------------------------------------------------------------------------
+Payment Details:
+
+DMITRIY STOLYAR                          Order Reference Number: 53274062
+TMCI Services Inc.                               Account Number: 29943736
+440 Neptune Ave Apt 8-H                              Order Date: 10 Jul 2010
+Brooklyn, NY 11224
+United States
+1718-683-4152
+kolomeyera@gmail.com
+
+Ship to:
+Alex Kolomeyer
+444 Neptune Ave Apt 11-K
+Brooklyn, NY 11224
+United States
+
+
+Product                                     Qty     Unit Price    Ext. Price
+----------------------------------------------------------------------------
+EZTwain Pro 3.0 Single Application Redistri   1    $       379.00   $       379.00
+-CD Tracking ID: 071010-570244-25847312                          $         9.90
+
+----------------------------------------------------------------------------
+                                                          Total: $       388.90
+
+
+Thank you again for your business,
+Best regards,
+Dosadi Sales
+support@dosadi.com
