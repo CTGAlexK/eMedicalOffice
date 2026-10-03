@@ -116,6 +116,7 @@ Partial Class frmNetSearch
         Me.FpSpreadDetails = New FarPoint.Win.Spread.FpSpread()
         Me.FpSpreadDetails_Sheet1 = New FarPoint.Win.Spread.SheetView()
         Me.TimerExternalSearch = New System.Windows.Forms.Timer(Me.components)
+        Me.lblWait = New System.Windows.Forms.Label()
         Me.Panel1.SuspendLayout()
         CType(Me.PictureBox1, System.ComponentModel.ISupportInitialize).BeginInit()
         Me.Panel2.SuspendLayout()
@@ -957,6 +958,20 @@ Partial Class frmNetSearch
         'TimerExternalSearch
         '
         '
+        'lblWait
+        '
+        Me.lblWait.Anchor = System.Windows.Forms.AnchorStyles.None
+        Me.lblWait.BackColor = System.Drawing.Color.FromArgb(CType(CType(192, Byte), Integer), CType(CType(64, Byte), Integer), CType(CType(0, Byte), Integer))
+        Me.lblWait.Font = New System.Drawing.Font("Microsoft Sans Serif", 9.75!, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, CType(204, Byte))
+        Me.lblWait.ForeColor = System.Drawing.Color.White
+        Me.lblWait.Location = New System.Drawing.Point(452, 324)
+        Me.lblWait.Name = "lblWait"
+        Me.lblWait.Size = New System.Drawing.Size(188, 23)
+        Me.lblWait.TabIndex = 164
+        Me.lblWait.Text = "Loading. Please wait..."
+        Me.lblWait.TextAlign = System.Drawing.ContentAlignment.MiddleCenter
+        Me.lblWait.Visible = False
+        '
         'frmNetSearch
         '
         Me.AutoScaleDimensions = New System.Drawing.SizeF(6.0!, 13.0!)
@@ -965,6 +980,7 @@ Partial Class frmNetSearch
         Me.BackgroundImage = CType(resources.GetObject("$this.BackgroundImage"), System.Drawing.Image)
         Me.CancelButton = Me.BtnCancel
         Me.ClientSize = New System.Drawing.Size(1174, 603)
+        Me.Controls.Add(Me.lblWait)
         Me.Controls.Add(Me.ListViewPatients)
         Me.Controls.Add(Me.Panel3)
         Me.Controls.Add(Me.Panel2)
@@ -1043,4 +1059,5 @@ End Sub
     Friend WithEvents Label2 As Label
     Friend WithEvents ColumnHeader6 As ColumnHeader
     Friend WithEvents TimerExternalSearch As Timer
+    Friend WithEvents lblWait As Label
 End Class

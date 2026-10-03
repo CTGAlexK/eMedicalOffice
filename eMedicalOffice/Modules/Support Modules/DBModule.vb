@@ -147,7 +147,6 @@ Er:
 
         gSQLGetDataReader = Reader
     End Function
-
     Public Function gSQLGetDataReader(SQL As String, connectionString As String) As SqlDataReader
         'Dim Cnn As New SqlConnection(connectionString)
 Er:

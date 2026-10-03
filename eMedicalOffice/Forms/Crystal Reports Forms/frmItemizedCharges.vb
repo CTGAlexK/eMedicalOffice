@@ -18,16 +18,26 @@ Public Class frmItemizedCharges
         DeleteTempFiles()
     End Sub
     Private Sub Form_Load(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles MyBase.Load
-        gWindow_Settings(Me, ReadWrite.sRead)
+        'gWindow_Settings(Me, ReadWrite.sRead, True)
         If gPrinterBillingEnvelope <> "" Then lblPrinter.Text = "Printer: " & gPrinterBillingEnvelope
-
+        gShowWait(True, PanelWait, Me)
+        Me.MinimizeBox = False
+        Timer1.Enabled = True
     End Sub
-    Public Sub Setup_report(ByVal BillID() As String, pPatientId As String)
-        Dim I As Integer
-        Dim sBills As String
+
+    Public Sub Setup_report(ByVal BillID() As String, pPatientId As Integer)
         PatientId = pPatientId
         btnAddToPatient.Visible = PatientId <> 0
         SaveBillID = BillID
+    End Sub
+
+    Private Sub Load_report()
+        Dim I As Integer
+        If SaveBillID Is Nothing OrElse SaveBillID.Length = 0 Then
+            gShowWait(False, PanelWait)
+            Close()
+            Exit Sub
+        End If
         Try
             Dim crParameterDiscreteValue As ParameterDiscreteValue = Nothing
             Dim crParameterFieldDefinitions As ParameterFieldDefinitions = Nothing
@@ -35,19 +45,18 @@ Public Class frmItemizedCharges
             Dim crParameterValues As ParameterValues = Nothing
             CR = New rptItemizedCharges
 
-            gShowWait(True, PanelWait, Me)
-            gWindow_Settings(Me, ReadWrite.sRead)
-
-            Me.MinimizeBox = False
-
-            If SetupCrystalSecurityInfo(CR) = False Then Exit Sub
+            If SetupCrystalSecurityInfo(CR) = False Then
+                gShowWait(False, PanelWait)
+                Close()
+                Exit Sub
+            End If
 
             crParameterFieldDefinitions = CR.DataDefinition.ParameterFields
-            For I = 0 To BillID.Count - 1
+            For I = 0 To SaveBillID.Count - 1
                 crParameterFieldLocation = crParameterFieldDefinitions.Item("BillID")
                 crParameterValues = crParameterFieldLocation.CurrentValues
                 crParameterDiscreteValue = New CrystalDecisions.Shared.ParameterDiscreteValue
-                crParameterDiscreteValue.Value = BillID(I).ToString
+                crParameterDiscreteValue.Value = SaveBillID(I).ToString
                 crParameterValues.Add(crParameterDiscreteValue)
             Next
             'crParameterFieldDefinitions = CR.DataDefinition.ParameterFields
@@ -70,6 +79,7 @@ Public Class frmItemizedCharges
             gCrystalViewerTabs(CrystalReportViewer1, False)
             CrystalReportViewer1.Visible = True
             gShowWait(False, PanelWait)
+            EnsureDialogVisible()
 
         Catch ex As Exception
             TopMost = False
@@ -77,6 +87,22 @@ Public Class frmItemizedCharges
             log.Error(ex.Message, ex)
             gShowWait(False, PanelWait)
         End Try
+    End Sub
+
+    Private Sub Timer1_Tick(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Timer1.Tick
+        Timer1.Enabled = False
+        EnsureDialogVisible()
+        Load_report()
+    End Sub
+
+    Private Sub EnsureDialogVisible()
+        Me.Visible = True
+        Me.TopMost = True
+        Me.TopMost = False
+        Application.DoEvents()
+        Me.TopMost = True
+        Me.BringToFront()
+        Me.Activate()
     End Sub
 
     Private Sub cmdClose_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles cmdClose.Click

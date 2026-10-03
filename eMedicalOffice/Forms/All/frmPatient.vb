@@ -335,7 +335,13 @@ Public Class frmPatient
             ToolStripSeparatorNetSearch.Visible = True
             NetSearchToolStripMenuItem.Visible = True
         End If
-
+        If Me.Owner IsNot Nothing Then
+            If Me.Owner.Name = "frmNetSearch" Then
+                Me.Owner.UseWaitCursor = False
+                Me.Owner.Hide()
+            End If
+        End If
+        Cursor = Cursors.Default
         TimerRefreshWhenMaximized.Enabled = True
     End Sub
 
@@ -1263,7 +1269,7 @@ Public Class frmPatient
             If gOfficeTypeID = 3 Then
                 If IsDate(Reader("PreCertificationDT").ToString) Then
                     sLI = LI.SubItems.Add(CDate(Reader("PreCertificationDT").ToString).ToShortDateString)
-             		If CDate(CDate(Reader("PreCertificationDT")).ToShortDateString()) < CDate(DateTime.Now.ToShortDateString) Then
+                    If CDate(CDate(Reader("PreCertificationDT")).ToShortDateString()) < CDate(DateTime.Now.ToShortDateString) Then
                         sLI.BackColor = Color.LightPink
                     Else
                         sLI.BackColor = Color.LightGreen
@@ -1656,7 +1662,7 @@ Public Class frmPatient
         'End If
     End Sub
 
-    public Sub cmdCancel_Click(sender As Object, e As EventArgs) Handles cmdCancel.Click
+    Public Sub cmdCancel_Click(sender As Object, e As EventArgs) Handles cmdCancel.Click
         Cancel_Edit(True)
     End Sub
 
@@ -2037,81 +2043,81 @@ Public Class frmPatient
             End If
             If CType(ComboBoxCaseStatusID.SelectedItem, ValueDescription).Value = 1 Then
 
-	            If txtNF2.Text <> "" And chkNF2.Checked = False Then
-	                If gCurrentEmployee.PositionID > 3 Then
-	                    Dim frm As frmSupervisorApproval = New frmSupervisorApproval
-	                    frm.LabelMsg.Text = "NF2 Report has not been submitted" & vbCrLf &
-	                                                          "Please confirm that NF2 Report has not been processed?"
-	                    If frm.ShowDialog <> Windows.Forms.DialogResult.OK Then
-	                        frm.Dispose()
-	                        frm = Nothing
-	                        TabControl1.SelectedIndex = 2 - ShiftWCTab
-	                        chkNF2.Focus()
-	                        Exit Sub
-	                    End If
-	                    ApprovedByName = frm.SupervisorName
-	                    frm.Dispose()
-	                Else
-	                    If _
-	                        MsgBox(
-	                            "Warning!" & vbCrLf & "You have removed check from the NF2 indicator." & vbCrLf &
-	                            "Please confirm that NF2 Report has not been processed?",
-	                            MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
-	                        frmSupervisorApproval.Dispose()
-	                        TabControl1.SelectedIndex = 2 - ShiftWCTab
-	                        chkNF2.Focus()
-	                        Exit Sub
-	                    End If
-	                    ApprovedByName = gCurrentEmployee.FName & " " & gCurrentEmployee.LName
-	
-	                End If
-	                NF2ApprovedBy = ApprovedByName
-            End If
+                If txtNF2.Text <> "" And chkNF2.Checked = False Then
+                    If gCurrentEmployee.PositionID > 3 Then
+                        Dim frm As frmSupervisorApproval = New frmSupervisorApproval
+                        frm.LabelMsg.Text = "NF2 Report has not been submitted" & vbCrLf &
+                                                              "Please confirm that NF2 Report has not been processed?"
+                        If frm.ShowDialog <> Windows.Forms.DialogResult.OK Then
+                            frm.Dispose()
+                            frm = Nothing
+                            TabControl1.SelectedIndex = 2 - ShiftWCTab
+                            chkNF2.Focus()
+                            Exit Sub
+                        End If
+                        ApprovedByName = frm.SupervisorName
+                        frm.Dispose()
+                    Else
+                        If _
+                            MsgBox(
+                                "Warning!" & vbCrLf & "You have removed check from the NF2 indicator." & vbCrLf &
+                                "Please confirm that NF2 Report has not been processed?",
+                                MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) = MsgBoxResult.No Then
+                            frmSupervisorApproval.Dispose()
+                            TabControl1.SelectedIndex = 2 - ShiftWCTab
+                            chkNF2.Focus()
+                            Exit Sub
+                        End If
+                        ApprovedByName = gCurrentEmployee.FName & " " & gCurrentEmployee.LName
 
-            If _
+                    End If
+                    NF2ApprovedBy = ApprovedByName
+                End If
+
+                If _
                 CType(ComboBoxCaseTypeID.SelectedItem, ValueDescription).Value < 3 Or
                 CType(ComboBoxCaseTypeID.SelectedItem, ValueDescription).Value = 5 Then
-                If IsDate(txtClaimEffectiveDT.Text) And txtClaimEffectiveDT.Text <> "" Then
-                    If gYearsFromDate(txtClaimEffectiveDT.Text) > 100 Then
-                        TabControl1.SelectedIndex = 2 - ShiftWCTab
-                        TabControl3.SelectedIndex = 0
-                        ErrorProvider1.SetError(txtClaimEffectiveDT,
+                    If IsDate(txtClaimEffectiveDT.Text) And txtClaimEffectiveDT.Text <> "" Then
+                        If gYearsFromDate(txtClaimEffectiveDT.Text) > 100 Then
+                            TabControl1.SelectedIndex = 2 - ShiftWCTab
+                            TabControl3.SelectedIndex = 0
+                            ErrorProvider1.SetError(txtClaimEffectiveDT,
                                                 "Unable to process update. Invalid Claim Effective Date.")
-                        MsgBox("Unable to process update." & vbCrLf & "Invalid Claim Effective Date.",
+                            MsgBox("Unable to process update." & vbCrLf & "Invalid Claim Effective Date.",
                                MsgBoxStyle.Exclamation)
-                        txtClaimEffectiveDT.Focus()
-                        Exit Sub
-                    End If
-                    If CDate(txtClaimEffectiveDT.Text) > CDate(txtDOA.Text) Then
-                        TabControl1.SelectedIndex = 2 - ShiftWCTab
-                        TabControl3.SelectedIndex = 0
-                        ErrorProvider1.SetError(txtClaimEffectiveDT,
+                            txtClaimEffectiveDT.Focus()
+                            Exit Sub
+                        End If
+                        If CDate(txtClaimEffectiveDT.Text) > CDate(txtDOA.Text) Then
+                            TabControl1.SelectedIndex = 2 - ShiftWCTab
+                            TabControl3.SelectedIndex = 0
+                            ErrorProvider1.SetError(txtClaimEffectiveDT,
                                                 "Unable to process update. Invalid Claim Effective Date.")
-                        MsgBox(
+                            MsgBox(
                             "Unable to process update." & vbCrLf & "Invalid Claim Effective Date." & vbCrLf &
                             "The Claim Effective Date should be less then DOA.", MsgBoxStyle.Exclamation)
-                        LabelEffectiveDate.ForeColor = Color.Black
-                        txtClaimEffectiveDT.Focus()
-                        Exit Sub
-                    End If
-                    If CDate(txtClaimEffectiveDT.Text) = CDate(txtDOA.Text) Then
-                        TabControl1.SelectedIndex = 2 - ShiftWCTab
-                        TabControl3.SelectedIndex = 0
-                        If _
+                            LabelEffectiveDate.ForeColor = Color.Black
+                            txtClaimEffectiveDT.Focus()
+                            Exit Sub
+                        End If
+                        If CDate(txtClaimEffectiveDT.Text) = CDate(txtDOA.Text) Then
+                            TabControl1.SelectedIndex = 2 - ShiftWCTab
+                            TabControl3.SelectedIndex = 0
+                            If _
                             MsgBox(
                                 "Attention! The Claim Effective Date is the same as DOA!" & vbCrLf &
                                 "The Claim Effective Date should be less then DOA." & vbCrLf &
                                 "Do you want to continue?", MsgBoxStyle.Exclamation + MsgBoxStyle.YesNo) =
                             MsgBoxResult.No Then
-                            ErrorProvider1.SetError(txtClaimEffectiveDT,
+                                ErrorProvider1.SetError(txtClaimEffectiveDT,
                                                     "Unable to process update. Invalid Claim Effective Date.")
-                            LabelEffectiveDate.ForeColor = Color.Black
-                            txtClaimEffectiveDT.Focus()
-                            Exit Sub
+                                LabelEffectiveDate.ForeColor = Color.Black
+                                txtClaimEffectiveDT.Focus()
+                                Exit Sub
+                            End If
+                            LabelEffectiveDate.ForeColor = Color.IndianRed
                         End If
-                        LabelEffectiveDate.ForeColor = Color.IndianRed
                     End If
-                End If
                 End If
                 If OpMode = AddEditMode.Edit Then
                     If _
@@ -2239,19 +2245,19 @@ Public Class frmPatient
                         Exit Sub
                     End If
                 End If
-            
-            If ComboBoxInsuranceCompanyID.SelectedIndex = -1 And ComboBoxInsuranceCompanyID1.SelectedIndex > 0 Then
-                TabControl1.SelectedIndex = 2 - ShiftWCTab
-                ErrorProvider1.SetError(ComboBoxInsuranceCompanyID1,
+
+                If ComboBoxInsuranceCompanyID.SelectedIndex = -1 And ComboBoxInsuranceCompanyID1.SelectedIndex > 0 Then
+                    TabControl1.SelectedIndex = 2 - ShiftWCTab
+                    ErrorProvider1.SetError(ComboBoxInsuranceCompanyID1,
                                         "Unable to set Secondary insurance company when Primary insurance company is not set.")
-                MsgBox(
+                    MsgBox(
                     "Unable to process update." & vbCrLf &
                     "Unable to set Secondary insurance company when Primary insurance company is not set.",
                     MsgBoxStyle.Exclamation)
-                TabControl3.SelectedIndex = 1
-                ComboBoxInsuranceCompanyID1.Focus()
-                Exit Sub
-            End If
+                    TabControl3.SelectedIndex = 1
+                    ComboBoxInsuranceCompanyID1.Focus()
+                    Exit Sub
+                End If
             End If
             If Not ComboBoxInsuranceCompanyID.SelectedItem Is Nothing Then
                 If _
@@ -3166,7 +3172,7 @@ Public Class frmPatient
                 LabelDOB.Text = "DOB Underage"
                 LabelDOB.ForeColor = Color.IndianRed
             End If
-            Validate_Billing_Data(false)
+            Validate_Billing_Data(False)
             ' Update Adjuster Information in previously created bills.
             UpdateInd = True
         Catch ex As Exception
@@ -3715,10 +3721,10 @@ er:
                 cmdUnlockInsurance.BringToFront()
             Else
                 If OpMode <> AddEditMode.None Then
-	                ComboBoxInsuranceCompanyID.Enabled = True
-	                ComboBoxClaimAddress.Enabled = True
-	                PanelInsurance.Enabled = True
-	                cmdAddInsuranceAddress.Enabled = True
+                    ComboBoxInsuranceCompanyID.Enabled = True
+                    ComboBoxClaimAddress.Enabled = True
+                    PanelInsurance.Enabled = True
+                    cmdAddInsuranceAddress.Enabled = True
 
                 End If
                 cmdUnlockInsurance.Visible = False
@@ -6225,14 +6231,35 @@ load_cached_image:
         ErrorProvider1.SetError(ComboBoxStateOfAccident, "")
     End Sub
 
-    Private Sub PrintPatientsChartToolStripMenuItem_Click(ByVal sender As Object, ByVal e As EventArgs) Handles PrintPatientsChartToolStripMenuItem.Click
+    Private Async Function WaitForTabletSignatureToCompleteAsync(chartSignPadID As Integer) As Task
+        Const pollIntervalMilliseconds As Integer = 2000
 
-        Print_Chart()
-    End Sub
+        Do While Await ChartSignPadRecordExistsAsync(chartSignPadID)
+            Await Task.Delay(pollIntervalMilliseconds)
+        Loop
+        gSQLUpdateData($"DELETE FROM ChartSignPad where ID = {chartSignPadID}")
+    End Function
+    Private Async Function ChartSignPadRecordExistsAsync(chartSignPadID As Integer) As Task(Of Boolean)
+        Const sql As String =
+        "SELECT CASE WHEN EXISTS " &
+        "(SELECT 1 FROM ChartSignPad WHERE CompleteInd=0 and ID = @ChartSignPadID) " &
+        "THEN 1 ELSE 0 END;"
 
+        Using conn As New SqlClient.SqlConnection(gConnectionString)
+            Await conn.OpenAsync()
+
+            Using cmd As New SqlClient.SqlCommand(sql, conn)
+                cmd.Parameters.Add("@ChartSignPadID", SqlDbType.Int).Value = chartSignPadID
+
+                Dim result As Integer = CInt(Await cmd.ExecuteScalarAsync())
+                Return result = 1
+            End Using
+        End Using
+    End Function
     Private Sub Print_Chart(Optional ByVal ForceEditMode As Boolean = False)
         Dim ForceFullReport As Boolean
         Try
+
             Dim CasePrivate As Boolean
             Dim ID As Long
             Dim PatientProcedureID() As String
@@ -6547,7 +6574,7 @@ load_cached_image:
         Dim fCount As Integer
         Dim Subject As String
         Dim DocNames As String
-     	If ListViewDocs.SelectedItems.Count = 0 Then
+        If ListViewDocs.SelectedItems.Count = 0 Then
             MsgBox("Unable to process your request. No Document selected.", MsgBoxStyle.Exclamation)
             Exit Sub
         End If
@@ -7873,25 +7900,60 @@ load_cached_image:
         Else
             PatientID = ListViewPatients.SelectedItems(0).Text
         End If
-
-        If FormsCollection.FindForm("frmBillingManagement") Is Nothing Then
-            frmBillingManagement.SearchPatientID = PatientID
-            frmBillingManagement.MdiParent = MDIForm1Win8
-            frmBillingManagement.Size = New Size(MDIForm1Win8.Width, MDIForm1Win8.Height)
-            frmBillingManagement.WindowState = FormWindowState.Maximized
-            Application.DoEvents()
-            frmBillingManagement.Show()
-            frmBillingManagement.BringToFront()
-            frmBillingManagement.WindowState = FormWindowState.Maximized
-            frmBillingManagement.ButtonFind_Click(Nothing, Nothing)
-        Else
-            frmBillingManagement.SearchPatientID = PatientID
-            frmBillingManagement.Show()
-            frmBillingManagement.BringToFront()
-            frmBillingManagement.WindowState = FormWindowState.Normal
-            frmBillingManagement.ButtonFind_Click(Nothing, Nothing)
-            frmBillingManagement.BringToFront()
+        Me.UseWaitCursor = True
+        Cursor = Cursors.WaitCursor
+        Label66.Text = "Loadintg. Please wait..."
+        PanelWait.Visible = True
+        PanelWait.Refresh()
+        Label66.Refresh()
+        Application.DoEvents()
+        LockWindowUpdate(MDIForm1Win8.Handle)
+        Application.DoEvents()
+        Dim frm As Form = FormsCollection.FindForm("frmBillingManagement")
+        If frm IsNot Nothing Then
+            frm.Close()
+            frm.Dispose()
         End If
+        'If FormsCollection.FindForm("frmBillingManagement") Is Nothing Then
+        '    frmBillingManagement.SearchPatientID = PatientID
+        '    frmBillingManagement.MdiParent = MDIForm1Win8
+        '    frmBillingManagement.Size = New Size(MDIForm1Win8.Width, MDIForm1Win8.Height)
+        '    frmBillingManagement.WindowState = FormWindowState.Maximized
+        '    Application.DoEvents()
+        '    frmBillingManagement.Show()
+        '    frmBillingManagement.BringToFront()
+        '    frmBillingManagement.WindowState = FormWindowState.Maximized
+        '    frmBillingManagement.ButtonFind_Click(Nothing, Nothing)
+        'Else
+        '    frmBillingManagement.SearchPatientID = PatientID
+        '    frmBillingManagement.Show()
+        '    frmBillingManagement.BringToFront()
+        '    frmBillingManagement.WindowState = FormWindowState.Maximized
+        '    frmBillingManagement.ButtonFind_Click(Nothing, Nothing)
+        '    frmBillingManagement.BringToFront()
+        'End If
+
+        frmBillingManagement.SearchPatientID = PatientID
+        frmBillingManagement.MdiParent = MDIForm1Win8
+        'frmBillingManagement.Size = New Size(MDIForm1Win8.Width, MDIForm1Win8.Height)
+        frmBillingManagement.WindowState = FormWindowState.Maximized
+        Application.DoEvents()
+        frmBillingManagement.Show()
+        frmBillingManagement.BringToFront()
+        frmBillingManagement.WindowState = FormWindowState.Maximized
+        frmBillingManagement.ButtonFind_Click(Nothing, Nothing)
+
+
+        Me.UseWaitCursor = False
+        Cursor = Cursors.Default
+        PanelWait.Visible = False
+        Label66.Text = "Validating Address. Please wait..."
+        LockWindowUpdate(0)
+        Me.WindowState = FormWindowState.Normal
+        Me.SendToBack()
+        frmBillingManagement.BringToFront()
+        'Me.Close()
+        'Me.Dispose()
     End Sub
 
     Private Sub ShowBillsToolBarButton_Click(ByVal sender As Object, ByVal e As EventArgs) Handles ShowBillsToolBarButton.Click
@@ -8072,14 +8134,14 @@ load_cached_image:
         If ListViewProcedures.SelectedItems.Count = 0 Then Exit Sub
         Li = ListViewProcedures.SelectedItems(0)
         PatName = ListViewPatients.SelectedItems(0).SubItems(1).Text
-         Using frm As New frmReCertificationExpDate
+        Using frm As New frmReCertificationExpDate
             frm.Label1.Text = "Please specify the Re-Cretification Expiration Date for" & vbCrLf & "Patient " & PatName & vbCrLf & "Procedure: " & Li.SubItems(1).Text
             If frm.ShowDialog(Me) <> DialogResult.OK Then
                 Return
             End If
             ReCertDate = frm.DateTimePicker1.Value
         End Using
-        
+
         'If _
         '    MsgBox(
         '        "Please confirm the Insurance Pre-Certification Verification has been completed for the following Patient/Procedure:" &
@@ -8913,7 +8975,7 @@ er:
     End Sub
 
     Private Sub ComboBoxEmploymentStatusID_SelectedValueChanged(sender As Object, e As EventArgs) Handles ComboBoxEmploymentStatusID.SelectedValueChanged
-         CheckBoxNoMoreCollection.Enabled = False
+        CheckBoxNoMoreCollection.Enabled = False
         If Not ComboBoxCaseStatusID.SelectedItem Is Nothing Then
             CheckBoxNoMoreCollection.Enabled = Not CType(ComboBoxCaseStatusID.SelectedItem, ValueDescription).Value = 1 And Not CType(ComboBoxCaseStatusID.SelectedItem, ValueDescription).Value = 4
             If CType(ComboBoxCaseStatusID.SelectedItem, ValueDescription).Value = 1 Or CType(ComboBoxCaseStatusID.SelectedItem, ValueDescription).Value = 4 Then
@@ -9069,4 +9131,5 @@ er:
             End If
         End If
     End Sub
+
 End Class

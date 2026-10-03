@@ -76,10 +76,6 @@ Partial Class frmPatient
         Me.Label126 = New System.Windows.Forms.Label()
         Me.txtEmployerAddressCity = New System.Windows.Forms.TextBox()
         Me.Label125 = New System.Windows.Forms.Label()
-        Me.PanelWait = New System.Windows.Forms.Panel()
-        Me.PictureBox4 = New System.Windows.Forms.PictureBox()
-        Me.PictureBox5 = New System.Windows.Forms.PictureBox()
-        Me.Label66 = New System.Windows.Forms.Label()
         Me.LabelSMS = New System.Windows.Forms.Label()
         Me.ButtonProceduresAutosize = New System.Windows.Forms.Button()
         Me.LabelNotesLength = New System.Windows.Forms.Label()
@@ -581,13 +577,12 @@ Partial Class frmPatient
         Me.ToolStripFonrDecrease = New System.Windows.Forms.ToolStripButton()
         Me.PrintDocument1 = New System.Drawing.Printing.PrintDocument()
         Me.PrintDialog2 = New System.Windows.Forms.PrintDialog()
+        Me.PanelWait = New System.Windows.Forms.Panel()
+        Me.Label66 = New System.Windows.Forms.Label()
         Me.TabControl1.SuspendLayout
         Me.TabPage1.SuspendLayout
         Me.ToolStripProcedures.SuspendLayout
         Me.ContextMenuStripProcedures.SuspendLayout
-        Me.PanelWait.SuspendLayout
-        CType(Me.PictureBox4, System.ComponentModel.ISupportInitialize).BeginInit
-        CType(Me.PictureBox5, System.ComponentModel.ISupportInitialize).BeginInit
         Me.Panel5.SuspendLayout
         Me.ToolStrip7.SuspendLayout
         CType(Me.picPhoto, System.ComponentModel.ISupportInitialize).BeginInit
@@ -640,6 +635,7 @@ Partial Class frmPatient
         Me.Panel2.SuspendLayout
         Me.Panel1.SuspendLayout
         Me.ToolStrip5.SuspendLayout
+        Me.PanelWait.SuspendLayout
         Me.SuspendLayout
         EnhancedColumnHeaderRenderer1.Name = "EnhancedColumnHeaderRenderer1"
         EnhancedColumnHeaderRenderer1.TextRotationAngle = 0R
@@ -678,7 +674,6 @@ Partial Class frmPatient
         Me.TabPage1.Controls.Add(Me.Label126)
         Me.TabPage1.Controls.Add(Me.txtEmployerAddressCity)
         Me.TabPage1.Controls.Add(Me.Label125)
-        Me.TabPage1.Controls.Add(Me.PanelWait)
         Me.TabPage1.Controls.Add(Me.LabelSMS)
         Me.TabPage1.Controls.Add(Me.ButtonProceduresAutosize)
         Me.TabPage1.Controls.Add(Me.LabelNotesLength)
@@ -1067,55 +1062,6 @@ Partial Class frmPatient
         Me.Label125.Size = New System.Drawing.Size(70, 13)
         Me.Label125.TabIndex = 295
         Me.Label125.Text = "Employer City"
-        '
-        'PanelWait
-        '
-        Me.PanelWait.Anchor = System.Windows.Forms.AnchorStyles.None
-        Me.PanelWait.BackColor = System.Drawing.Color.White
-        Me.PanelWait.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle
-        Me.PanelWait.Controls.Add(Me.PictureBox4)
-        Me.PanelWait.Controls.Add(Me.PictureBox5)
-        Me.PanelWait.Controls.Add(Me.Label66)
-        Me.PanelWait.Location = New System.Drawing.Point(244, 228)
-        Me.PanelWait.Name = "PanelWait"
-        Me.PanelWait.Size = New System.Drawing.Size(216, 37)
-        Me.PanelWait.TabIndex = 293
-        Me.PanelWait.Visible = False
-        '
-        'PictureBox4
-        '
-        Me.PictureBox4.BackColor = System.Drawing.Color.Transparent
-        Me.PictureBox4.Dock = System.Windows.Forms.DockStyle.Left
-        Me.PictureBox4.Image = CType(resources.GetObject("PictureBox4.Image"), System.Drawing.Image)
-        Me.PictureBox4.Location = New System.Drawing.Point(0, 0)
-        Me.PictureBox4.Name = "PictureBox4"
-        Me.PictureBox4.Size = New System.Drawing.Size(26, 22)
-        Me.PictureBox4.SizeMode = System.Windows.Forms.PictureBoxSizeMode.CenterImage
-        Me.PictureBox4.TabIndex = 2
-        Me.PictureBox4.TabStop = False
-        '
-        'PictureBox5
-        '
-        Me.PictureBox5.BackColor = System.Drawing.Color.FromArgb(CType(CType(255, Byte), Integer), CType(CType(128, Byte), Integer), CType(CType(0, Byte), Integer))
-        Me.PictureBox5.Dock = System.Windows.Forms.DockStyle.Bottom
-        Me.PictureBox5.Image = CType(resources.GetObject("PictureBox5.Image"), System.Drawing.Image)
-        Me.PictureBox5.Location = New System.Drawing.Point(0, 22)
-        Me.PictureBox5.Name = "PictureBox5"
-        Me.PictureBox5.Size = New System.Drawing.Size(214, 13)
-        Me.PictureBox5.SizeMode = System.Windows.Forms.PictureBoxSizeMode.CenterImage
-        Me.PictureBox5.TabIndex = 1
-        Me.PictureBox5.TabStop = False
-        '
-        'Label66
-        '
-        Me.Label66.BackColor = System.Drawing.Color.Transparent
-        Me.Label66.Font = New System.Drawing.Font("Microsoft Sans Serif", 8.25!, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, CType(0, Byte))
-        Me.Label66.ForeColor = System.Drawing.Color.Black
-        Me.Label66.Location = New System.Drawing.Point(27, 5)
-        Me.Label66.Name = "Label66"
-        Me.Label66.Size = New System.Drawing.Size(182, 13)
-        Me.Label66.TabIndex = 0
-        Me.Label66.Text = "Validating Address. Please wait..."
         '
         'LabelSMS
         '
@@ -6599,8 +6545,7 @@ Partial Class frmPatient
         '
         'Panel3
         '
-        Me.Panel3.BackColor = System.Drawing.Color.White
-        Me.Panel3.BackgroundImage = CType(resources.GetObject("Panel3.BackgroundImage"), System.Drawing.Image)
+        Me.Panel3.BackColor = System.Drawing.Color.WhiteSmoke
         Me.Panel3.Controls.Add(Me.PanelPrinting)
         Me.Panel3.Controls.Add(Me.LabelFound)
         Me.Panel3.Controls.Add(Me.ButtonTools)
@@ -6662,106 +6607,121 @@ Partial Class frmPatient
         '
         'ButtonTools
         '
+        Me.ButtonTools.BackColor = System.Drawing.Color.Gainsboro
         Me.ButtonTools.ContextMenuStrip = Me.ContextMenuStrip1
         Me.ButtonTools.FlatAppearance.BorderSize = 0
         Me.ButtonTools.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(CType(CType(255, Byte), Integer), CType(CType(128, Byte), Integer), CType(CType(0, Byte), Integer))
+        Me.ButtonTools.FlatStyle = System.Windows.Forms.FlatStyle.Flat
         Me.ButtonTools.Image = CType(resources.GetObject("ButtonTools.Image"), System.Drawing.Image)
         Me.ButtonTools.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft
-        Me.ButtonTools.Location = New System.Drawing.Point(10, 2)
+        Me.ButtonTools.Location = New System.Drawing.Point(10, 3)
         Me.ButtonTools.Name = "ButtonTools"
         Me.ButtonTools.Size = New System.Drawing.Size(85, 24)
         Me.ButtonTools.TabIndex = 7
         Me.ButtonTools.Text = "Tools"
-        Me.ButtonTools.UseVisualStyleBackColor = True
+        Me.ButtonTools.UseVisualStyleBackColor = False
         '
         'cmdClose
         '
         Me.cmdClose.Anchor = CType((System.Windows.Forms.AnchorStyles.Top Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.cmdClose.BackColor = System.Drawing.Color.Gainsboro
         Me.cmdClose.CausesValidation = False
         Me.cmdClose.FlatAppearance.BorderSize = 0
         Me.cmdClose.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(CType(CType(255, Byte), Integer), CType(CType(128, Byte), Integer), CType(CType(0, Byte), Integer))
-        Me.cmdClose.Location = New System.Drawing.Point(951, 2)
+        Me.cmdClose.FlatStyle = System.Windows.Forms.FlatStyle.Flat
+        Me.cmdClose.Location = New System.Drawing.Point(951, 3)
         Me.cmdClose.Name = "cmdClose"
         Me.cmdClose.Size = New System.Drawing.Size(75, 24)
         Me.cmdClose.TabIndex = 5
         Me.cmdClose.Text = "Close"
-        Me.cmdClose.UseVisualStyleBackColor = True
+        Me.cmdClose.UseVisualStyleBackColor = False
         '
         'cmdCancel
         '
         Me.cmdCancel.Anchor = CType((System.Windows.Forms.AnchorStyles.Top Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.cmdCancel.BackColor = System.Drawing.Color.Gainsboro
         Me.cmdCancel.CausesValidation = False
         Me.cmdCancel.Enabled = False
         Me.cmdCancel.FlatAppearance.BorderSize = 0
         Me.cmdCancel.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(CType(CType(255, Byte), Integer), CType(CType(128, Byte), Integer), CType(CType(0, Byte), Integer))
+        Me.cmdCancel.FlatStyle = System.Windows.Forms.FlatStyle.Flat
         Me.cmdCancel.Image = CType(resources.GetObject("cmdCancel.Image"), System.Drawing.Image)
         Me.cmdCancel.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft
-        Me.cmdCancel.Location = New System.Drawing.Point(833, 2)
+        Me.cmdCancel.Location = New System.Drawing.Point(833, 3)
         Me.cmdCancel.Name = "cmdCancel"
         Me.cmdCancel.Size = New System.Drawing.Size(75, 24)
         Me.cmdCancel.TabIndex = 4
         Me.cmdCancel.Text = "Cancel"
         Me.cmdCancel.TextAlign = System.Drawing.ContentAlignment.MiddleRight
-        Me.cmdCancel.UseVisualStyleBackColor = True
+        Me.cmdCancel.UseVisualStyleBackColor = False
         '
         'cmdUpdate
         '
         Me.cmdUpdate.Anchor = CType((System.Windows.Forms.AnchorStyles.Top Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.cmdUpdate.BackColor = System.Drawing.Color.Gainsboro
         Me.cmdUpdate.Enabled = False
         Me.cmdUpdate.FlatAppearance.BorderSize = 0
         Me.cmdUpdate.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(CType(CType(255, Byte), Integer), CType(CType(128, Byte), Integer), CType(CType(0, Byte), Integer))
+        Me.cmdUpdate.FlatStyle = System.Windows.Forms.FlatStyle.Flat
         Me.cmdUpdate.Image = CType(resources.GetObject("cmdUpdate.Image"), System.Drawing.Image)
         Me.cmdUpdate.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft
-        Me.cmdUpdate.Location = New System.Drawing.Point(752, 2)
+        Me.cmdUpdate.Location = New System.Drawing.Point(752, 3)
         Me.cmdUpdate.Name = "cmdUpdate"
         Me.cmdUpdate.Size = New System.Drawing.Size(75, 24)
         Me.cmdUpdate.TabIndex = 3
         Me.cmdUpdate.Text = "Update"
         Me.cmdUpdate.TextAlign = System.Drawing.ContentAlignment.MiddleRight
-        Me.cmdUpdate.UseVisualStyleBackColor = True
+        Me.cmdUpdate.UseVisualStyleBackColor = False
         '
         'cmdDelete
         '
         Me.cmdDelete.Anchor = CType((System.Windows.Forms.AnchorStyles.Top Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.cmdDelete.BackColor = System.Drawing.Color.Gainsboro
         Me.cmdDelete.Enabled = False
-        Me.cmdDelete.Location = New System.Drawing.Point(464, 4)
+        Me.cmdDelete.FlatAppearance.BorderSize = 0
+        Me.cmdDelete.FlatStyle = System.Windows.Forms.FlatStyle.Flat
+        Me.cmdDelete.Location = New System.Drawing.Point(464, 3)
         Me.cmdDelete.Name = "cmdDelete"
         Me.cmdDelete.Size = New System.Drawing.Size(75, 23)
         Me.cmdDelete.TabIndex = 0
         Me.cmdDelete.Text = "Delete"
-        Me.cmdDelete.UseVisualStyleBackColor = True
+        Me.cmdDelete.UseVisualStyleBackColor = False
         Me.cmdDelete.Visible = False
         '
         'cmdEdit
         '
         Me.cmdEdit.Anchor = CType((System.Windows.Forms.AnchorStyles.Top Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.cmdEdit.BackColor = System.Drawing.Color.Gainsboro
         Me.cmdEdit.Enabled = False
         Me.cmdEdit.FlatAppearance.BorderSize = 0
         Me.cmdEdit.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(CType(CType(255, Byte), Integer), CType(CType(128, Byte), Integer), CType(CType(0, Byte), Integer))
+        Me.cmdEdit.FlatStyle = System.Windows.Forms.FlatStyle.Flat
         Me.cmdEdit.Image = CType(resources.GetObject("cmdEdit.Image"), System.Drawing.Image)
         Me.cmdEdit.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft
-        Me.cmdEdit.Location = New System.Drawing.Point(671, 2)
+        Me.cmdEdit.Location = New System.Drawing.Point(671, 3)
         Me.cmdEdit.Name = "cmdEdit"
         Me.cmdEdit.Size = New System.Drawing.Size(75, 24)
         Me.cmdEdit.TabIndex = 2
         Me.cmdEdit.Text = "Edit"
         Me.cmdEdit.TextAlign = System.Drawing.ContentAlignment.MiddleRight
-        Me.cmdEdit.UseVisualStyleBackColor = True
+        Me.cmdEdit.UseVisualStyleBackColor = False
         '
         'cmdAddNew
         '
         Me.cmdAddNew.Anchor = CType((System.Windows.Forms.AnchorStyles.Top Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.cmdAddNew.BackColor = System.Drawing.Color.Gainsboro
         Me.cmdAddNew.FlatAppearance.BorderSize = 0
         Me.cmdAddNew.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(CType(CType(255, Byte), Integer), CType(CType(128, Byte), Integer), CType(CType(0, Byte), Integer))
+        Me.cmdAddNew.FlatStyle = System.Windows.Forms.FlatStyle.Flat
         Me.cmdAddNew.Image = CType(resources.GetObject("cmdAddNew.Image"), System.Drawing.Image)
         Me.cmdAddNew.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft
-        Me.cmdAddNew.Location = New System.Drawing.Point(590, 2)
+        Me.cmdAddNew.Location = New System.Drawing.Point(590, 3)
         Me.cmdAddNew.Name = "cmdAddNew"
         Me.cmdAddNew.Size = New System.Drawing.Size(75, 24)
         Me.cmdAddNew.TabIndex = 1
         Me.cmdAddNew.Text = "Add"
         Me.cmdAddNew.TextAlign = System.Drawing.ContentAlignment.MiddleRight
-        Me.cmdAddNew.UseVisualStyleBackColor = True
+        Me.cmdAddNew.UseVisualStyleBackColor = False
         '
         'TimerPdfRefresh
         '
@@ -7076,6 +7036,31 @@ Partial Class frmPatient
         Me.PrintDialog2.Document = Me.PrintDocument1
         Me.PrintDialog2.UseEXDialog = True
         '
+        'PanelWait
+        '
+        Me.PanelWait.Anchor = System.Windows.Forms.AnchorStyles.None
+        Me.PanelWait.BackColor = System.Drawing.Color.White
+        Me.PanelWait.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle
+        Me.PanelWait.Controls.Add(Me.Label66)
+        Me.PanelWait.Location = New System.Drawing.Point(399, 271)
+        Me.PanelWait.Name = "PanelWait"
+        Me.PanelWait.Size = New System.Drawing.Size(238, 27)
+        Me.PanelWait.TabIndex = 371
+        Me.PanelWait.Visible = False
+        '
+        'Label66
+        '
+        Me.Label66.BackColor = System.Drawing.Color.FromArgb(CType(CType(192, Byte), Integer), CType(CType(64, Byte), Integer), CType(CType(0, Byte), Integer))
+        Me.Label66.Dock = System.Windows.Forms.DockStyle.Fill
+        Me.Label66.Font = New System.Drawing.Font("Microsoft Sans Serif", 9.75!)
+        Me.Label66.ForeColor = System.Drawing.Color.White
+        Me.Label66.Location = New System.Drawing.Point(0, 0)
+        Me.Label66.Name = "Label66"
+        Me.Label66.Size = New System.Drawing.Size(236, 25)
+        Me.Label66.TabIndex = 0
+        Me.Label66.Text = "Validating Address. Please wait..."
+        Me.Label66.TextAlign = System.Drawing.ContentAlignment.MiddleCenter
+        '
         'frmPatient
         '
         Me.AutoScaleDimensions = New System.Drawing.SizeF(6.0!, 13.0!)
@@ -7083,6 +7068,7 @@ Partial Class frmPatient
         Me.BackColor = System.Drawing.Color.WhiteSmoke
         Me.BackgroundImageLayout = System.Windows.Forms.ImageLayout.Stretch
         Me.ClientSize = New System.Drawing.Size(1036, 569)
+        Me.Controls.Add(Me.PanelWait)
         Me.Controls.Add(Me.ToolStrip5)
         Me.Controls.Add(Me.Panel2)
         Me.Controls.Add(Me.TabControl1)
@@ -7103,9 +7089,6 @@ Partial Class frmPatient
         Me.ToolStripProcedures.ResumeLayout(False)
         Me.ToolStripProcedures.PerformLayout
         Me.ContextMenuStripProcedures.ResumeLayout(False)
-        Me.PanelWait.ResumeLayout(False)
-        CType(Me.PictureBox4, System.ComponentModel.ISupportInitialize).EndInit
-        CType(Me.PictureBox5, System.ComponentModel.ISupportInitialize).EndInit
         Me.Panel5.ResumeLayout(False)
         Me.Panel5.PerformLayout
         Me.ToolStrip7.ResumeLayout(False)
@@ -7187,6 +7170,7 @@ Partial Class frmPatient
         Me.Panel1.PerformLayout
         Me.ToolStrip5.ResumeLayout(False)
         Me.ToolStrip5.PerformLayout
+        Me.PanelWait.ResumeLayout(False)
         Me.ResumeLayout(False)
         Me.PerformLayout
 
@@ -7695,10 +7679,6 @@ Partial Class frmPatient
     Friend WithEvents WCIcon As PictureBox
     Friend WithEvents PrintDialog1 As PrintDialog
     Friend WithEvents Button1 As Button
-    Friend WithEvents PanelWait As Panel
-    Friend WithEvents PictureBox4 As PictureBox
-    Friend WithEvents PictureBox5 As PictureBox
-    Friend WithEvents Label66 As Label
     Friend WithEvents BtnAddPatientAttorney As Button
     Friend WithEvents cboPatientAttorney As AutoCompleteComboBox
     Friend WithEvents ComboBoxInsuranceCompanyID As AutoCompleteComboBox
@@ -7741,4 +7721,6 @@ Partial Class frmPatient
     Friend WithEvents ToolStripSeparator8 As ToolStripSeparator
     Friend WithEvents ToolStripButton7 As ToolStripButton
     Friend WithEvents CheckBoxNoMoreCollection As CheckBox
+    Friend WithEvents PanelWait As Panel
+    Friend WithEvents Label66 As Label
 End Class

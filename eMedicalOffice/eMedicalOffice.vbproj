@@ -48,8 +48,8 @@
     <ProductName>eMedical Office</ProductName>
     <PublisherName>Alex Kolomeyer</PublisherName>
     <AutorunEnabled>true</AutorunEnabled>
-    <ApplicationRevision>100</ApplicationRevision>
-    <ApplicationVersion>2.3.8000.100</ApplicationVersion>
+    <ApplicationRevision>104</ApplicationRevision>
+    <ApplicationVersion>2.3.8000.104</ApplicationVersion>
     <UseApplicationTrust>true</UseApplicationTrust>
     <CreateDesktopShortcut>true</CreateDesktopShortcut>
     <PublishWizardCompleted>true</PublishWizardCompleted>

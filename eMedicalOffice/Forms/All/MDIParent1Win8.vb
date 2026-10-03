@@ -513,7 +513,7 @@ Public Class MDIForm1Win8
         End If
 
         gIdleTimeCurrent = GetIdleTime() / 1000
-        If gIdleTimeCurrent > 0 Then
+        If gIdleTimeCurrent > 0 AndAlso gIdleShutDown > 0 Then
             If gIdleTimeCurrent > (gIdleShutDown * 60) + 300 Then ' +5 Min Warning
                 End
             ElseIf gIdleTimeCurrent > gIdleShutDown * 60 Then 'Minutes * 60 to get seconds
@@ -3859,4 +3859,5 @@ er:
         frm.ShowDialog(Me)
         frm.Dispose()
     End Sub
+
 End Class

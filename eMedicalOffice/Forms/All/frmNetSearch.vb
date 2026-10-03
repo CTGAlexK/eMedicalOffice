@@ -506,28 +506,20 @@ ExitSub:
             Exit Sub
         End If
         Me.UseWaitCursor = True
+        Cursor = Cursors.WaitCursor
+        lblWait.Visible = True
+        lblWait.Refresh()
         Application.DoEvents()
         LI = ListViewPatients.SelectedItems(0)
         Using Frm As New frmPatient
-
             Frm.InitialTab = 0
             Frm.InitialPatientName = LI.Text
             Frm.MinimizeBox = False
             Frm.MaximizeBox = False
-            Me.UseWaitCursor = False
             Frm.ShowDialog(Me)
         End Using
-        'Dim frm As Form = FormsCollection.FindForm("frmPatient")
-        'If Not frm Is Nothing Then
-        '    MsgBox("The Patient's information window is already opened." & vbCrLf & vbCrLf & "Please close the previous patient information window before opening a new one.", MsgBoxStyle.Exclamation)
-        '    frm.WindowState = FormWindowState.Normal
-        '    frm.BringToFront()
-        '    Exit Sub
-        'Else
-        '    frmPatient.InitialTab = 0
-        '    frmPatient.InitialPatientName = LI.Text
-        '    frmPatient.ShowDialog(Me)
-        'End If
+        lblWait.Visible = False
+        Me.Close()
     End Sub
 
     Private Sub ButtonReport_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) _
@@ -658,6 +650,9 @@ ExitSub:
             Exit Sub
         End If
         Me.UseWaitCursor = True
+        Cursor = Cursors.WaitCursor
+        lblWait.Visible = True
+        lblWait.Refresh()
         Application.DoEvents()
         LI = ListViewPatients.SelectedItems(0)
         Dim Frm As frmBillingManagement
@@ -673,6 +668,9 @@ ExitSub:
         Frm.Show()
         Frm.BringToFront()
         Frm.WindowState = FormWindowState.Maximized
+        lblWait.Visible = False
+        Me.Close()
+        Cursor = Cursors.Default
     End Sub
 
     Private Sub ContextMenuStrip1_Opening(sender As Object, e As System.ComponentModel.CancelEventArgs) Handles ContextMenuStrip1.Opening

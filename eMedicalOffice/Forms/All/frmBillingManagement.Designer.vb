@@ -490,7 +490,7 @@ Retry:
         '
         Me.ContextMenuStrip1.Items.AddRange(New System.Windows.Forms.ToolStripItem() {Me.SelectAllToolStripMenuItem, Me.SelectNoneToolStripMenuItem, Me.ToolStripSeparator28, Me.mnuShowSelectedPatientInfo1, Me.ToolStripSeparator25, Me.ToolStripMenuItem17, Me.ToolStripSeparator51, Me.ToolStripMenuUpdateAdjusterInformation, Me.ToolStripSeparator2, Me.mnuPrinting1, Me.ToolStripSeparator18, Me.mnuBillingTools1, Me.ToolStripSeparatorSendToAttorneyToolStripMenuItem, Me.mnuPOM1, Me.ToolStripSeparator10, Me.mnuAttorney1, Me.ToolStripSeparator1, Me.ToolStripMenuItemItemizedCharges, Me.mnuCollection1, Me.ToolStripMenuItemRequest, Me.AdminToolsToolStripSeparator, Me.AdminToolsToolStripMenuItem})
         Me.ContextMenuStrip1.Name = "ContextMenuStrip1"
-        Me.ContextMenuStrip1.Size = New System.Drawing.Size(226, 366)
+        Me.ContextMenuStrip1.Size = New System.Drawing.Size(226, 344)
         '
         'SelectAllToolStripMenuItem
         '
@@ -3098,6 +3098,7 @@ Retry:
         Me.ToolStripButtonDetach.Name = "ToolStripButtonDetach"
         Me.ToolStripButtonDetach.Size = New System.Drawing.Size(23, 22)
         Me.ToolStripButtonDetach.Text = "Attach / Detach Window"
+        Me.ToolStripButtonDetach.Visible = False
         '
         'ToolStripSeparator24
         '

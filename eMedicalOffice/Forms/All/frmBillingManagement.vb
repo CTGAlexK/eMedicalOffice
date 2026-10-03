@@ -4292,12 +4292,15 @@ er:
                 I = I + 1
             Next
         End If
+        Using frm As New frmItemizedCharges
+            frm.Setup_report(BillID, SavePatientID)
+            frm.MinimizeBox = False
+            frm.MaximizeBox = False
+            frm.TopMost = True
+            Application.DoEvents()
+            frm.ShowDialog(Me)
+        End Using
 
-        frmItemizedCharges.Setup_report(BillID, SavePatientID)
-        frmItemizedCharges.MinimizeBox = False
-        frmItemizedCharges.MaximizeBox = False
-        frmItemizedCharges.ShowDialog(Me)
-        frmItemizedCharges.PatientId = 0
     End Sub
 
     Private Sub ListViewRequests_DoubleClick(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles ListViewRequests.DoubleClick

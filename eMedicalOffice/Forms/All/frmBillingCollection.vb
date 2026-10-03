@@ -2012,6 +2012,7 @@ er:
         frmItemizedCharges.Setup_report(BillID, SavePatientID)
         frmItemizedCharges.MinimizeBox = False
         frmItemizedCharges.MaximizeBox = False
+        Application.DoEvents()
         frmItemizedCharges.ShowDialog(Me)
     End Sub
 
